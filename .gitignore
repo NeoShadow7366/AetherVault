@@ -1,0 +1,28 @@
+# OS
+Thumbs.db
+.DS_Store
+
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local runtime artifacts
+logs/
+*.log
+
+# Large local/runtime dependencies
+bin/
+Global_Vault/
+packages/comfyui/env/
