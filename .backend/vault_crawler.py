@@ -63,10 +63,14 @@ class VaultCrawler:
             logging.warning("Vault directory missing; nothing to crawl.")
             return
 
+        tracked_files = self.db.get_all_filenames()
+
         # Simple thread pool to parallelize hashing for very fast Multi-Channel NVMe SSDs
         with ThreadPoolExecutor(max_workers=4) as executor:
             for root, _, files in os.walk(self.vault_dir):
                 for file in files:
+                    if file in tracked_files:
+                        continue
                     # Submit each file to the worker pool
                     executor.submit(self._process_file, root, file)
                     

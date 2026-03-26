@@ -10,7 +10,10 @@
     "checkpoints": "models/Stable-diffusion",
     "loras": "models/Lora",
     "vaes": "models/VAE",
-    "controlnet": "models/ControlNet"
+    "controlnet": "models/ControlNet",
+    "unet": "models/unet",
+    "clip": "models/text_encoder",
+    "embeddings": "embeddings"
   },
-  "launch_command": "launch.py --autolaunch"
+  "launch_command": "launch.py --autolaunch --api"
 }

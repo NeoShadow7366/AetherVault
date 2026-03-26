@@ -34,10 +34,12 @@ class Downloader:
         status[job_id].update(update_dict)
         self._write_status(status)
 
-    def download(self, job_id, url, dest_folder, filename, model_name):
+    def download(self, job_id, url, dest_folder, filename, model_name, api_key=None):
         self.update_job(job_id, {
             "model_name": model_name,
             "filename": filename,
+            "url": url,
+            "dest_folder": dest_folder,
             "status": "starting",
             "progress": 0,
             "downloaded": 0,
@@ -47,7 +49,10 @@ class Downloader:
         target_path = os.path.join(dest_folder, filename)
         
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'AIManager/1.0'})
+            headers = {'User-Agent': 'AIManager/1.0'}
+            if api_key:
+                headers['Authorization'] = f"Bearer {api_key}"
+            req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req) as response:
                 total_size = int(response.info().get('Content-Length', 0))
                 self.update_job(job_id, {"status": "downloading", "total": total_size})
@@ -106,6 +111,7 @@ if __name__ == "__main__":
     parser.add_argument("--filename", required=True)
     parser.add_argument("--model_name", required=True)
     parser.add_argument("--root_dir", required=True)
+    parser.add_argument("--api_key", required=False)
 
     args = parser.parse_args()
     
@@ -116,4 +122,4 @@ if __name__ == "__main__":
     os.makedirs(args.dest_folder, exist_ok=True)
     
     downloader = Downloader(args.root_dir)
-    downloader.download(args.job_id, args.url, args.dest_folder, args.filename, args.model_name)
+    downloader.download(args.job_id, args.url, args.dest_folder, args.filename, args.model_name, args.api_key)

@@ -12,7 +12,8 @@
     "checkpoints": "models/Stable-diffusion",
     "loras": "models/Lora",
     "vaes": "models/VAE",
-    "controlnet": "extensions/sd-webui-controlnet/models"
+    "controlnet": "extensions/sd-webui-controlnet/models",
+    "embeddings": "embeddings"
   },
-  "launch_command": "launch.py --autolaunch"
+  "launch_command": "launch.py --autolaunch --api"
 }

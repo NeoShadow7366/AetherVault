@@ -16,6 +16,26 @@
             --border: #334155;
         }
 
+        [data-theme="light"] {
+            --bg-color: #f8fafc;
+            --surface: #ffffff;
+            --surface-hover: #f1f5f9;
+            --primary: #2563eb;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+        }
+
+        [data-theme="glass"] {
+            --bg-color: #020617; /* Very deep blue/black */
+            --surface: rgba(30, 41, 59, 0.45); /* Semi-transparent */
+            --surface-hover: rgba(51, 65, 85, 0.65);
+            --primary: #8b5cf6; /* Vibrant purple */
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: rgba(255, 255, 255, 0.08); /* Faint glass border */
+        }
+
         body {
             font-family: 'Inter', sans-serif;
             background-color: var(--bg-color);
@@ -350,7 +370,68 @@
             padding: 15px;
             border-radius: 8px;
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            animation: slideIn 0.3s ease-out;
         }
+
+        /* Download Popup Modal */
+        .dl-status-item {
+            background: var(--bg-color);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .dl-status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.9rem;
+        }
+        .dl-status-progress {
+            height: 6px;
+            background: #1e293b;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .dl-status-bar {
+            height: 100%;
+            background: var(--primary);
+            transition: width 0.3s ease;
+        }
+        .badge-count {
+            background: #ef4444;
+            color: white;
+            font-size: 0.7rem;
+            padding: 2px 5px;
+            border-radius: 10px;
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            min-width: 15px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .dl-indicator-btn {
+            position: relative;
+            background: var(--surface-hover);
+            border: 1px solid var(--border);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        .dl-indicator-btn:hover { border-color: var(--primary); background: var(--surface); }
         
         .dl-bar-bg { width: 100%; height: 6px; background: var(--bg-color); border-radius: 3px; margin-top: 10px; overflow: hidden;}
         .dl-bar-fill { height: 100%; background: var(--primary); transition: width 0.3s linear; }
@@ -370,11 +451,13 @@
 
     <div class="sidebar">
         <h2>🚀 AI Manager</h2>
-        <div class="nav-item active" onclick="switchTab('explorer')">Model Explorer</div>
-        <div class="nav-item" onclick="switchTab('vault')">Global Vault</div>
-        <div class="nav-item" onclick="switchTab('inference')">Inference Studio</div>
-        <div class="nav-item" onclick="switchTab('appstore')">App Store</div>
-        <div class="nav-item" onclick="switchTab('packages')">Installed Packages</div>
+        <div class="nav-item active" onclick="switchTab('explorer', this)">Model Explorer</div>
+        <div class="nav-item" onclick="switchTab('vault', this)">Global Vault</div>
+        <div class="nav-item" onclick="switchTab('creations', this)">🎨 My Creations</div>
+        <div class="nav-item" onclick="switchTab('inference', this)">Inference Studio</div>
+        <div class="nav-item" onclick="switchTab('appstore', this)">App Store</div>
+        <div class="nav-item" onclick="switchTab('packages', this)">Installed Packages</div>
+        <div class="nav-item" onclick="switchTab('settings', this)" style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 15px;">⚙️ Settings</div>
     </div>
 
     <div class="main-content">
@@ -386,6 +469,10 @@
         <!-- Model Explorer View -->
         <div id="view-explorer">
             <div class="toolbar">
+                <select id="ex-source" onchange="loadExplorer()" style="background:var(--primary); color:white; font-weight:bold; border-radius:8px; padding:0 10px; height:40px; border:none; cursor:pointer;">
+                    <option value="civitai">CivitAI</option>
+                    <option value="huggingface">Hugging Face</option>
+                </select>
                 <input type="text" id="ex-search" placeholder="Search models, tags..." style="flex: 1;" onchange="loadExplorer()">
                 
                 <select id="ex-sort" onchange="loadExplorer()">
@@ -445,6 +532,14 @@
                     <span>Card Size</span>
                     <input type="range" min="150" max="400" value="280" oninput="document.getElementById('explorer-grid').style.setProperty('--card-width', this.value + 'px')">
                 </div>
+
+                <button id="ex-dl-trigger" onclick="toggleDownloadPopup()" class="dl-indicator-btn" title="View Downloads">
+                    <span>📥</span>
+                    <span id="ex-dl-badge" class="badge-count" style="display:none">0</span>
+                </button>
+                <button onclick="toggleSettings()" class="dl-indicator-btn" title="CivitAI Settings">
+                    <span>⚙️</span>
+                </button>
             </div>
 
             <div class="grid" id="explorer-grid">
@@ -454,17 +549,117 @@
 
         <!-- Vault View -->
         <div id="view-vault" style="display: none;">
+            <!-- Drop Zone -->
+            <div id="vault-dropzone"
+                 style="border: 2px dashed var(--border); border-radius: 14px; padding: 30px; text-align: center; margin-bottom: 24px; cursor: pointer; color: var(--text-muted); font-size: 0.95rem; transition: all 0.2s; background: var(--surface);"
+                 ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'; this.style.background='rgba(59,130,246,0.06)';"
+                 ondragleave="this.style.borderColor='var(--border)'; this.style.background='var(--surface)';"
+                 ondrop="event.preventDefault(); this.style.borderColor='var(--border)'; this.style.background='var(--surface)'; handleVaultFileDrop(event);"
+                 onclick="document.getElementById('vault-file-input').click()">
+                <div style="font-size: 2.5rem;">📂</div>
+                <div style="font-weight: 600; color: var(--text-main); margin: 8px 0 4px;">Drag & Drop Model Files Here</div>
+                <div>.safetensors &nbsp;·&nbsp; .ckpt &nbsp;·&nbsp; .pt &nbsp;·&nbsp; .bin</div>
+                <input type="file" id="vault-file-input" accept=".safetensors,.ckpt,.pt,.bin" multiple style="display:none" onchange="handleVaultFileInput(this.files)">
+            </div>
+
+            <div class="toolbar" style="margin-bottom: 20px;">
+                <input type="text" id="vault-search" placeholder="Semantic Search: 'anime', 'realism' (Press Enter)" style="flex: 1;" onkeyup="if(event.key==='Enter') searchVaultModels(this.value)">
+                <select id="vault-tag-filter" class="select-fancy" style="width: auto; margin-right: 10px;" onchange="filterVaultByTag(this.value)">
+                    <option value="">All Collections / Tags</option>
+                </select>
+                <select id="vault-cat-filter" onchange="filterVaultGrid(document.getElementById('vault-search').value)" class="select-fancy" style="width: auto;">
+                    <option value="">All Categories</option>
+                    <option value="checkpoints">Checkpoints</option>
+                    <option value="loras">LoRA</option>
+                    <option value="vaes">VAE</option>
+                    <option value="controlnet">ControlNet</option>
+                    <option value="embeddings">Embeddings</option>
+                    <option value="unet">UNET</option>
+                    <option value="clip">CLIP</option>
+                    <option value="text_encoders">Text Encoders</option>
+                    <option value="upscalers">Upscalers</option>
+                </select>
+                <button onclick="triggerHealthCheck()" style="margin-left: 10px; padding: 10px 15px; background: var(--surface-hover); color: var(--text-muted); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem;" title="Clean Broken Package Links">🩺 Health Scan</button>
+                <button onclick="triggerUpdatesCheck()" style="margin-left: 10px; padding: 10px 15px; background: var(--surface-hover); color: #60a5fa; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem;" title="Query CivitAI for newer versions">🔄 Check Updates</button>
+                <button onclick="triggerUnmanagedImport()" style="margin-left: 10px; padding: 10px 15px; background: var(--surface-hover); color: #a7f3d0; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem;" title="Scan Global_Vault for local files and fetch metadata">📥 Import Local Files</button>
+            </div>
+
             <div class="grid" id="models-grid" style="--card-width: 250px;"></div>
+            <div id="vault-load-more-container" style="text-align: center; padding: 40px 0; display: none;">
+                <button onclick="loadModels(true)" style="background: var(--surface-hover); border: 1px solid var(--border); color: #fff; padding: 12px 30px; border-radius: 10px; cursor: pointer; font-weight: 600; transition: all 0.2s;">Load More Models</button>
+            </div>
+        </div>
+
+        <!-- My Creations View -->
+        <div id="view-creations" style="display: none;">
+            <div class="toolbar" style="margin-bottom: 20px;">
+                <input type="text" id="gallery-search" placeholder="Search by prompt, model..." style="flex:1;" oninput="filterGallery(this.value)">
+                <select id="gallery-sort" class="select-fancy" style="width:auto;" onchange="loadGallery()">
+                    <option value="newest">Newest First</option>
+                    <option value="oldest">Oldest First</option>
+                    <option value="top_rated">Top Rated</option>
+                </select>
+            </div>
+            <div class="grid" id="gallery-grid" style="--card-width: 240px;">
+                <div class="empty-state">No generations yet. Create something in the Inference Studio!</div>
+            </div>
         </div>
 
         <!-- App Store View -->
-        <div id="view-appstore" style="display: none;">
+        <div id="view-appstore" style="display: none; padding-top: 10px;">
+            <div class="toolbar" style="margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); background: var(--surface);">
+                <div style="font-weight: 600;">Sandbox App Deployment</div>
+                <button onclick="document.getElementById('recipe-modal').style.display='flex';" style="background: var(--primary); color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer;">✨ Create Recipe</button>
+            </div>
             <div class="grid" id="recipes-grid"></div>
         </div>
 
         <!-- Packages View -->
         <div id="view-packages" class="view-content" style="display: none;">
             <div class="grid" id="packages-grid"></div>
+        </div>
+
+        <!-- Settings View -->
+        <div id="view-settings" style="display: none; padding-top: 10px; max-width: 650px; margin: 0 auto;">
+            <div class="std-card">
+                <h2 style="margin-top:0;">Global Settings</h2>
+                <div style="display:flex; flex-direction:column; gap:20px; margin-top:20px;">
+                    <div>
+                        <label class="section-title">CivitAI API Key</label>
+                        <input type="password" id="set-api-key" class="select-fancy" style="width:100%;" placeholder="Paste key for mature content and updates...">
+                    </div>
+
+                    <div>
+                        <label class="section-title">HuggingFace API Key (Optional)</label>
+                        <input type="password" id="set-hf-api-key" class="select-fancy" style="width:100%;" placeholder="Paste HF token to access gated models...">
+                    </div>
+                    
+                    <div>
+                        <label class="section-title">UI Theme</label>
+                        <select id="set-theme" class="select-fancy" style="width:100%;">
+                            <option value="dark">Dark Mode</option>
+                            <option value="light">Light Mode</option>
+                            <option value="glass">Glassmorphism</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="section-title">Background Updater</label>
+                        <select id="set-updates" class="select-fancy" style="width:100%;">
+                            <option value="true">Enable Auto-Updates on Startup</option>
+                            <option value="false">Disable Auto-Updates</option>
+                        </select>
+                    </div>
+
+                    <button onclick="saveSettings()" style="background:var(--primary); color:#fff; border:none; padding:12px 20px; border-radius:8px; font-weight:600; cursor:pointer;">💾 Save Preferences</button>
+                </div>
+            </div>
+
+            <div class="std-card" style="margin-top:30px; border-color: #ef4444;">
+                <h3 style="color:#ef4444; margin-top:0;">System Maintenance</h3>
+                <p style="color:var(--text-muted); font-size:0.9rem;">Trigger an immediate self-update ping to the orchestrator repository to patch `.backend` logic.</p>
+                <button onclick="triggerSystemUpdate()" style="background:#ef4444; color:#fff; border:none; padding:10px 20px; border-radius:8px; font-weight:600; cursor:pointer; margin-top:10px;">Apply System Update Toolkit</button>
+            </div>
         </div>
 
     <!-- Active Downloads Overlay -->
@@ -504,6 +699,9 @@
                 </div>
 
                 <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:20px;" id="lb-tags-container"></div>
+                <div id="lb-tagging-controls" style="display:none; margin-top:10px;">
+                    <input type="text" id="lb-new-tag" placeholder="Add custom tag (Enter)..." style="background:var(--bg-color); border:1px solid var(--border); color:white; padding:8px 10px; border-radius:6px; font-size:0.85rem; width:100%; outline:none;" onkeyup="if(event.key==='Enter') addVaultTag(this.value)">
+                </div>
 
                 <div style="margin-top: auto;">
                     <div id="lb-actions-standard">
@@ -521,29 +719,214 @@
             </div>
         </div>
     </div>
+    <!-- CivitAI Settings Modal -->
+    <div class="lightbox-overlay" id="settings-modal" style="display:none; align-items:center; justify-content:center;" onclick="if(event.target===this) toggleSettings()">
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:450px; padding:30px; box-shadow:0 10px 30px rgba(0,0,0,0.5);">
+            <h2 style="margin:0 0 10px;">CivitAI Authenticaton</h2>
+            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:20px;">Provide your API Key to download gated or early-access models.</p>
+            
+            <label class="section-title">CivitAI API Key</label>
+            <input type="password" id="settings-api-key" class="select-fancy" style="width:100%; margin-bottom:20px;" placeholder="Paste API Key here...">
+            
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button onclick="toggleSettings()" style="background:none; border:none; color:var(--text-muted); cursor:pointer;">Cancel</button>
+                <button onclick="saveSettings()" style="background:var(--primary); color:#fff; border:none; padding:10px 20px; border-radius:8px; font-weight:600; cursor:pointer;">Save Key</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════ GALLERY LIGHTBOX MODAL ═══════ -->
+    <div id="gallery-lightbox" class="lightbox-overlay" style="display:none; align-items:center; justify-content:center; z-index:400;" onclick="if(event.target===this)this.style.display='none'">
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:16px; width:900px; height:85vh; display:flex; overflow:hidden; box-shadow:0 30px 60px rgba(0,0,0,0.7);">
+            <!-- Image Area -->
+            <div style="flex:1; background:#000; display:flex; align-items:center; justify-content:center; position:relative;">
+                <img id="gl-img" src="" style="max-width:100%; max-height:100%; object-fit:contain;">
+                <div style="position:absolute; bottom:20px; right:20px; display:flex; gap:10px;">
+                    <button onclick="restoreToStudioFromGallery()" style="background:var(--primary); color:#fff; border:none; padding:10px 18px; border-radius:8px; font-weight:600; cursor:pointer;">⚡ Send to Studio</button>
+                    <button onclick="deleteGenerationFromGallery()" style="background:#ef4444; color:#fff; border:none; padding:10px 18px; border-radius:8px; font-weight:600; cursor:pointer;">🗑 Delete</button>
+                </div>
+            </div>
+            <!-- Metadata Sidebar -->
+            <div style="width:320px; border-left:1px solid var(--border); padding:24px; overflow-y:auto; background:var(--surface);">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px;">
+                    <h2 style="margin:0; font-size:1.1rem;">Generation Info</h2>
+                    <button onclick="document.getElementById('gallery-lightbox').style.display='none'" style="background:none; border:none; border-radius:50%; color:var(--text-muted); cursor:pointer; font-size:1.5rem; line-height:1;">&times;</button>
+                </div>
+                
+                <div class="section-title">Prompt</div>
+                <div id="gl-prompt" style="font-size:0.85rem; color:#f1f5f9; background:var(--bg-color); padding:10px; border-radius:8px; margin-bottom:16px; border:1px solid var(--border); white-space:pre-wrap;"></div>
+                
+                <div class="section-title">Negative Prompt</div>
+                <div id="gl-negative" style="font-size:0.85rem; color:var(--text-muted); background:var(--bg-color); padding:10px; border-radius:8px; margin-bottom:20px; border:1px solid var(--border); white-space:pre-wrap;"></div>
+                
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; font-size:0.8rem;">
+                    <div><div class="section-title" style="margin-bottom:4px;">Model</div><div id="gl-model" style="color:#fff"></div></div>
+                    <div><div class="section-title" style="margin-bottom:4px;">Sampler</div><div id="gl-sampler" style="color:#fff"></div></div>
+                    <div><div class="section-title" style="margin-bottom:4px;">Steps</div><div id="gl-steps" style="color:#fff"></div></div>
+                    <div><div class="section-title" style="margin-bottom:4px;">CFG</div><div id="gl-cfg" style="color:#fff"></div></div>
+                    <div><div class="section-title" style="margin-bottom:4px;">Size</div><div id="gl-size" style="color:#fff"></div></div>
+                    <div><div class="section-title" style="margin-bottom:4px;">Seed</div><div id="gl-seed" style="color:#fff"></div></div>
+                </div>
+                <div id="gl-date" style="margin-top:20px; font-size:0.75rem; color:var(--text-muted); text-align:right;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════ IMPORT PROGRESS MODAL ═══════ -->
+    <div id="import-progress-modal" class="lightbox-overlay" style="display:none; align-items:center; justify-content:center; z-index:300;" onclick="if(event.target===this&&window._importDone)this.style.display='none'">
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:16px; width:520px; padding:30px; box-shadow:0 20px 50px rgba(0,0,0,0.6);">
+            <h2 style="margin:0 0 6px; font-size:1.2rem;">Importing Model</h2>
+            <div id="import-filename" style="color:var(--text-muted); font-size:0.9rem; margin-bottom:20px;"></div>
+            <div style="height:8px; background:var(--bg-color); border-radius:4px; overflow:hidden; margin-bottom:12px;">
+                <div id="import-bar" style="height:100%; background:var(--primary); width:0%; transition:width 0.3s ease; border-radius:4px;"></div>
+            </div>
+            <div id="import-status-msg" style="color:var(--text-muted); font-size:0.85rem; margin-bottom:24px;">Queued...</div>
+            <!-- Category selector shown before import starts -->
+            <div id="import-cat-row" style="margin-bottom:20px;">
+                <label class="section-title">Model Category</label>
+                <select id="import-category" class="select-fancy">
+                    <option value="">Auto-detect</option>
+                    <option value="checkpoints">Checkpoint</option>
+                    <option value="loras">LoRA / LyCORIS</option>
+                    <option value="vaes">VAE</option>
+                    <option value="controlnet">ControlNet</option>
+                    <option value="embeddings">Embedding</option>
+                    <option value="unet">UNET (FLUX)</option>
+                    <option value="clip">CLIP Encoder</option>
+                    <option value="text_encoders">T5-XXL Encoder</option>
+                    <option value="upscalers">Upscaler</option>
+                </select>
+            </div>
+            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                <button id="import-cancel-btn" onclick="document.getElementById('import-progress-modal').style.display='none'" style="background:none;border:none;color:var(--text-muted);cursor:pointer;">Close</button>
+                <button id="import-start-btn" onclick="commitImport()" style="background:var(--primary);color:#fff;border:none;padding:10px 20px;border-radius:8px;font-weight:600;cursor:pointer;">Start Import</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════ DEPENDENCY RESOLVER POPUP ═══════ -->
+    <div id="dep-resolver-modal" class="lightbox-overlay" style="display:none; align-items:center; justify-content:center; z-index:350;" onclick="if(event.target===this)this.style.display='none'">
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:16px; width:560px; max-height:80vh; overflow-y:auto; padding:30px; box-shadow:0 20px 50px rgba(0,0,0,0.6);">
+            <h2 style="margin:0 0 6px; font-size:1.2rem;">✅ Import Complete!</h2>
+            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:20px;" id="dep-model-name"></p>
+            <div class="section-title">Recommended Dependencies</div>
+            <div id="dep-list" style="display:flex; flex-direction:column; gap:10px; margin-top:12px; margin-bottom:24px;"></div>
+            <div style="display:flex; justify-content:flex-end;">
+                <button onclick="document.getElementById('dep-resolver-modal').style.display='none'; loadModels(false);" style="background:var(--primary);color:#fff;border:none;padding:10px 22px;border-radius:8px;font-weight:600;cursor:pointer;">Done</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Inference View -->
-    <div id="view-inference" class="view-content" style="display: none; height: calc(100vh - 120px); flex-direction: row; gap: 20px;">
-        <!-- Left Sidebar: Config -->
-        <div style="width: 340px; background: var(--bg-color); display: flex; flex-direction: column; gap: 20px; overflow-y: auto; padding-right: 10px;"
-             ondragover="event.preventDefault(); this.style.opacity=0.6;"
-             ondragleave="this.style.opacity=1.0;"
-             ondrop="event.preventDefault(); this.style.opacity=1.0; restoreMetadataFromDrop(event);">
+    <div id="view-inference" class="view-content" style="display: none; height: calc(100vh - 120px); flex-direction: row; gap: 0; user-select: none;">
+
+        <!-- Help Lightbox Modal -->
+        <div id="inf-help-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:9999; align-items:center; justify-content:center;" onclick="if(event.target===this)this.style.display='none';">
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:16px; max-width:700px; width:90%; max-height:85vh; overflow-y:auto; padding:30px; position:relative;">
+                <button onclick="document.getElementById('inf-help-modal').style.display='none'" style="position:absolute;top:15px;right:15px;background:none;border:none;color:var(--text-muted);font-size:1.5rem;cursor:pointer;">✕</button>
+                <h2 style="margin:0 0 20px; font-size:1.3rem;">Inference Studio — Guide</h2>
+                <div style="display:flex;flex-direction:column;gap:16px;">
+                    <div style="background:var(--bg-color);border-radius:10px;padding:16px;border:1px solid var(--border)">
+                        <b style="color:var(--primary)">Model Checkpoint / Refiner / VAE</b>
+                        <p style="margin:8px 0 0;color:var(--text-muted);font-size:0.9rem;">Select the base diffusion model. Optionally chain a Refiner (e.g. SDXL-Refiner) for enhanced detail in second-pass. VAE overrides the baked image decoder — useful for fixing colour shifts.</p>
+                    </div>
+                    <div style="background:var(--bg-color);border-radius:10px;padding:16px;border:1px solid var(--border)">
+                        <b style="color:var(--primary)">LoRA Network</b>
+                        <p style="margin:8px 0 0;color:var(--text-muted);font-size:0.9rem;">Add fine-tuning adapters stacked on the base model. Each slot has a weight slider — higher values apply the style more strongly.</p>
+                    </div>
+                    <div style="background:var(--bg-color);border-radius:10px;padding:16px;border:1px solid var(--border)">
+                        <b style="color:var(--primary)">Sampler Engine &amp; Scheduler</b>
+                        <p style="margin:8px 0 0;color:var(--text-muted);font-size:0.9rem;">Sampler controls the noise removal algorithm. Euler A is fast and creative; DPM++ 2M Karras produces crisp, consistent results. Scheduler shapes the noise curve — Karras is recommended for most use cases.</p>
+                    </div>
+                    <div style="background:var(--bg-color);border-radius:10px;padding:16px;border:1px solid var(--border)">
+                        <b style="color:var(--primary)">Steps, CFG Scale, Seed</b>
+                        <p style="margin:8px 0 0;color:var(--text-muted);font-size:0.9rem;">Steps = how many refinement passes (20–30 is typical). CFG = how closely the model follows your prompt (7 is balanced, 12+ is strict). Seed = -1 for random, or fix a value to reproduce an image.</p>
+                    </div>
+                    <div style="background:var(--bg-color);border-radius:10px;padding:16px;border:1px solid var(--border)">
+                        <b style="color:var(--primary)">High-Res Fix</b>
+                        <p style="margin:8px 0 0;color:var(--text-muted);font-size:0.9rem;">Generate at base resolution then upscale and re-sample for sharper detail. Latent upscalers are fast; ESRGAN/SwinIR produce higher fidelity. Denoise 0.3–0.6 adds detail without changing composition.</p>
+                    </div>
+                    <div style="background:var(--bg-color);border-radius:10px;padding:16px;border:1px solid var(--border)">
+                        <b style="color:var(--primary)">Image-to-Image</b>
+                        <p style="margin:8px 0 0;color:var(--text-muted);font-size:0.9rem;">Upload a reference image to guide generation. Denoise Strength 1.0 = full re-generation; lower values preserve more of the original.</p>
+                    </div>
+                    <div style="background:var(--bg-color);border-radius:10px;padding:16px;border:1px solid var(--border)">
+                        <b style="color:var(--primary)">Gallery</b>
+                        <p style="margin:8px 0 0;color:var(--text-muted);font-size:0.9rem;">All generated images appear in the gallery strip. <b>Click</b> a thumbnail to view it. <b>Drag</b> a thumbnail to the output area or the Config column to fully restore all generation settings. Scroll the mouse wheel over the output image to zoom.</p>
+                    </div>
+                    <div style="background:var(--bg-color);border-radius:10px;padding:16px;border:1px solid var(--border)">
+                        <b style="color:var(--primary)">Column Resizing</b>
+                        <p style="margin:8px 0 0;color:var(--text-muted);font-size:0.9rem;">Drag the vertical dividers between columns to resize them to your preference.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Left Column: Config -->
+        <div id="inf-col-left" style="width: 340px; min-width:200px; background: var(--bg-color); display: flex; flex-direction: column; gap: 20px; overflow-y: auto; padding: 0 10px 20px 0; flex-shrink:0;"
+             ondragover="event.preventDefault(); this.style.outline='2px dashed var(--primary)';"
+             ondragleave="this.style.outline='none';"
+             ondrop="event.preventDefault(); this.style.outline='none'; restoreMetadataFromDrop(event);">
             
             <!-- Generation Controls -->
             <div style="background: var(--surface); border-radius: 12px; border: 1px solid var(--border); display: flex; flex-direction: column;">
-            <div style="padding: 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--surface); z-index: 10;">
+            <div style="padding: 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--surface); z-index: 10; border-radius: 12px 12px 0 0;">
                 <h3 style="margin: 0; font-size: 1rem;">Config</h3>
-                <button id="inf-launch-btn" onclick="launchComfyUI()" style="background: var(--surface-hover); border: 1px solid var(--border); color: #cbd5e1; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight:600;">Launch Engine</button>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button onclick="document.getElementById('inf-help-modal').style.display='flex';" title="Help" style="background:none;border:1px solid var(--border);color:var(--text-muted);width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;">ℹ</button>
+                    <button id="inf-launch-btn" onclick="launchActiveEngine()" style="background: var(--surface-hover); border: 1px solid var(--border); color: #cbd5e1; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight:600;">Launch Engine</button>
+                </div>
             </div>
             <div style="padding: 20px; display: flex; flex-direction: column; gap: 20px;">
+                <!-- Inference Engine -->
                 <div>
-                    <label class="section-title">Model Checkpoint</label>
-                    <select id="inf-model" class="select-fancy"></select>
+                    <label class="section-title">Inference Engine</label>
+                    <select id="inf-engine" class="select-fancy" onchange="onEngineChange(this.value)">
+                        <option value="comfyui">ComfyUI (Default)</option>
+                        <option value="a1111">A1111 / Forge / SD Next</option>
+                        <option value="fooocus">Fooocus</option>
+                    </select>
                 </div>
+                <!-- Model Type -->
                 <div>
+                    <label class="section-title">Model Type</label>
+                    <select id="inf-model-type" class="select-fancy" onchange="onModelTypeChange(this.value)">
+                        <option value="auto">Auto-Detect</option>
+                        <option value="sd">SD 1.5</option>
+                        <option value="sdxl">SDXL</option>
+                        <option value="flux-dev">FLUX.1-dev</option>
+                        <option value="flux-schnell">FLUX.1-schnell</option>
+                    </select>
+                </div>
+                <!-- SD: Checkpoint -->
+                <div id="inf-sd-model-row">
+                    <label class="section-title">Model Checkpoint</label>
+                    <select id="inf-model" class="select-fancy" onchange="autoDetectModelType(this.value)"></select>
+                </div>
+                <!-- FLUX: UNET -->
+                <div id="inf-flux-unet-row" style="display:none;">
+                    <label class="section-title">FLUX UNET</label>
+                    <select id="inf-flux-unet" class="select-fancy"><option value="">Select FLUX UNET...</option></select>
+                </div>
+                <!-- FLUX: CLIP-L -->
+                <div id="inf-flux-clip-l-row" style="display:none;">
+                    <label class="section-title">CLIP-L Encoder</label>
+                    <select id="inf-flux-clip-l" class="select-fancy"><option value="">Select CLIP-L...</option></select>
+                </div>
+                <!-- FLUX: T5-XXL -->
+                <div id="inf-flux-t5xxl-row" style="display:none;">
+                    <label class="section-title">T5-XXL Encoder</label>
+                    <select id="inf-flux-t5xxl" class="select-fancy"><option value="">Select T5-XXL...</option></select>
+                </div>
+                <!-- FLUX: Guidance (dev only) -->
+                <div id="inf-flux-guidance-row" style="display:none;">
+                    <label class="section-title">Guidance Scale <span style="font-size:0.75rem;color:var(--text-muted)">(FLUX-dev)</span></label>
+                    <input type="number" id="inf-flux-guidance" class="select-fancy" value="3.5" step="0.5" min="0" max="20">
+                </div>
+                <!-- SD: Refiner (hidden in FLUX mode) -->
+                <div id="inf-sd-refiner-row">
                     <label class="section-title">Refiner Checkpoint</label>
-                    <select id="inf-refiner" class="select-fancy">
+                    <select id="inf-refiner" class="select-fancy" onchange="document.getElementById('inf-refiner-steps-row').style.display=this.value&&this.value!=='none'?'flex':'none';">
                         <option value="none">None</option>
                     </select>
                 </div>
@@ -563,37 +946,75 @@
                         <!-- dynamic lora slots added here -->
                     </div>
                 </div>
+
                 <div>
                     <label class="section-title">Sampler Engine</label>
                     <select id="inf-sampler" class="select-fancy">
-                        <option value="euler">Euler</option>
-                        <option value="euler_ancestral">Euler A</option>
-                        <option value="dpmpp_2m">DPM++ 2M</option>
-                        <option value="dpmpp_sde">DPM++ SDE</option>
-                        <option value="lcm">LCM</option>
+                        <optgroup label="Euler">
+                            <option value="euler">Euler</option>
+                            <option value="euler_cfg_pp">Euler CFG++</option>
+                            <option value="euler_ancestral" selected>Euler A</option>
+                            <option value="euler_ancestral_cfg_pp">Euler A CFG++</option>
+                        </optgroup>
+                        <optgroup label="Heun">
+                            <option value="heun">Heun</option>
+                            <option value="heunpp2">Heun++ 2</option>
+                        </optgroup>
+                        <optgroup label="DPM">
+                            <option value="dpm_2">DPM 2</option>
+                            <option value="dpm_2_ancestral">DPM 2 A</option>
+                            <option value="dpm_fast">DPM Fast</option>
+                            <option value="dpm_adaptive">DPM Adaptive</option>
+                        </optgroup>
+                        <optgroup label="DPM++">
+                            <option value="dpmpp_2s_ancestral">DPM++ 2S A</option>
+                            <option value="dpmpp_sde">DPM++ SDE</option>
+                            <option value="dpmpp_sde_gpu">DPM++ SDE GPU</option>
+                            <option value="dpmpp_2m">DPM++ 2M</option>
+                            <option value="dpmpp_2m_cfg_pp">DPM++ 2M CFG++</option>
+                            <option value="dpmpp_2m_sde">DPM++ 2M SDE</option>
+                            <option value="dpmpp_2m_sde_gpu">DPM++ 2M SDE GPU</option>
+                            <option value="dpmpp_3m_sde">DPM++ 3M SDE</option>
+                            <option value="dpmpp_3m_sde_gpu">DPM++ 3M SDE GPU</option>
+                        </optgroup>
+                        <optgroup label="Other">
+                            <option value="lms">LMS</option>
+                            <option value="ddpm">DDPM</option>
+                            <option value="ddim">DDIM</option>
+                            <option value="lcm">LCM</option>
+                            <option value="ipndm">IPNDM</option>
+                            <option value="ipndm_v">IPNDM V</option>
+                            <option value="deis">DEIS</option>
+                            <option value="uni_pc">UniPC</option>
+                            <option value="uni_pc_bh2">UniPC BH2</option>
+                        </optgroup>
                     </select>
                 </div>
                 <div>
-                    <label class="section-title">Scheduler Noise</label>
+                    <label class="section-title">Scheduler</label>
                     <select id="inf-scheduler" class="select-fancy">
                         <option value="normal">Normal</option>
-                        <option value="karras">Karras</option>
+                        <option value="karras" selected>Karras</option>
                         <option value="exponential">Exponential</option>
                         <option value="sgm_uniform">SGM Uniform</option>
                         <option value="simple">Simple</option>
+                        <option value="ddim_uniform">DDIM Uniform</option>
+                        <option value="beta">Beta</option>
+                        <option value="linear_quadratic">Linear Quadratic</option>
+                        <option value="kl_optimal">KL Optimal</option>
                     </select>
                 </div>
                 <div style="display: flex; gap: 15px;">
                     <div style="flex: 1;">
-                        <label class="section-title">Steps Base</label>
+                        <label class="section-title">Steps</label>
                         <input type="number" id="inf-steps" class="select-fancy" value="20" min="1" max="150">
                     </div>
-                    <div style="flex: 1;">
-                        <label class="section-title">Steps Refiner</label>
+                    <div id="inf-refiner-steps-row" style="flex: 1; display: none;">
+                        <label class="section-title">Refiner Steps</label>
                         <input type="number" id="inf-refiner-steps" class="select-fancy" value="10" min="1" max="150">
                     </div>
                 </div>
-                <div>
+                <div id="inf-sd-cfg-row">
                     <label class="section-title">CFG Scale</label>
                     <input type="number" id="inf-cfg" class="select-fancy" value="7.0" step="0.5" min="1" max="30">
                 </div>
@@ -616,26 +1037,37 @@
                 </div>
 
                 <div style="border-top: 1px solid var(--border); padding-top: 15px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="document.getElementById('inf-hires-container').style.display = document.getElementById('inf-hires-container').style.display === 'none' ? 'flex' : 'none';">
-                        <label class="section-title" style="margin: 0; cursor: pointer;">High-Res Fix (x1.5)</label>
+                    <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="const c=document.getElementById('inf-hires-container');c.style.display=c.style.display==='none'?'flex':'none';">
+                        <label class="section-title" style="margin: 0; cursor: pointer;">High-Res Fix</label>
                         <input type="checkbox" id="inf-hires-enable" style="transform: scale(1.2); cursor: pointer;" onchange="event.stopPropagation();">
                     </div>
                     <div id="inf-hires-container" style="display: none; flex-direction: column; gap: 15px; margin-top: 15px;">
                         <div>
-                            <label class="section-title">Upscaler Type</label>
+                            <label class="section-title">Upscaler</label>
                             <select id="inf-hires-upscaler" class="select-fancy">
-                                <option value="latent">Latent</option>
-                                <option value="esrgan">ESRGAN</option>
+                                <optgroup label="Latent">
+                                    <option value="latent_nearest">Latent (nearest)</option>
+                                    <option value="latent_bilinear" selected>Latent (bilinear)</option>
+                                    <option value="latent_bicubic">Latent (bicubic)</option>
+                                    <option value="latent_nearest_exact">Latent (nearest-exact)</option>
+                                </optgroup>
+                                <optgroup label="ESRGAN">
+                                    <option value="esrgan_4x">ESRGAN 4x</option>
+                                    <option value="esrgan_4x_anime">RealESRGAN 4x+ Anime</option>
+                                </optgroup>
+                                <optgroup label="Other">
+                                    <option value="swinir_4x">SwinIR 4x</option>
+                                </optgroup>
                             </select>
                         </div>
                         <div style="display: flex; gap: 15px;">
                             <div style="flex: 1;">
-                                <label class="section-title">Steps</label>
-                                <input type="number" id="inf-hires-steps" class="select-fancy" value="10" min="1" max="50">
-                            </div>
-                            <div style="flex: 1;">
                                 <label class="section-title">Scale</label>
                                 <input type="number" id="inf-hires-factor" class="select-fancy" value="1.5" step="0.1" min="1.1" max="4.0">
+                            </div>
+                            <div style="flex: 1;">
+                                <label class="section-title">Steps</label>
+                                <input type="number" id="inf-hires-steps" class="select-fancy" value="10" min="1" max="50">
                             </div>
                             <div style="flex: 1;">
                                 <label class="section-title">Denoise</label>
@@ -645,10 +1077,8 @@
                     </div>
                 </div>
 
-
-
-                <div style="border-top: 1px solid var(--border); padding-top: 15px; padding-bottom: 15px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="document.getElementById('inf-cn-container').style.display = document.getElementById('inf-cn-container').style.display === 'none' ? 'flex' : 'none';">
+                <div id="inf-sd-cn-row" style="border-top: 1px solid var(--border); padding-top: 15px; padding-bottom: 15px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="const c=document.getElementById('inf-cn-container');c.style.display=c.style.display==='none'?'flex':'none';">
                         <label class="section-title" style="margin: 0; cursor: pointer;">ControlNet Engine</label>
                         <input type="checkbox" id="inf-cn-enable" style="transform: scale(1.2); cursor: pointer;" onchange="event.stopPropagation();">
                     </div>
@@ -658,11 +1088,12 @@
                         </select>
                         <div id="inf-cn-dropzone" style="border: 2px dashed var(--border); padding: 20px; text-align: center; border-radius: 8px; cursor: pointer; color: var(--text-muted); position: relative; overflow: hidden; height: 100px; display: flex; align-items: center; justify-content: center; background: var(--bg-color);" 
                              onclick="document.getElementById('inf-cn-file').click()"
-                             ondragover="event.preventDefault();"
-                             ondrop="event.preventDefault(); if(event.dataTransfer.files.length) { document.getElementById('inf-cn-file').files = event.dataTransfer.files; handleCnUpload({target: document.getElementById('inf-cn-file')}); }">
+                             ondragover="event.preventDefault(); this.style.borderColor='var(--primary)';"
+                             ondragleave="this.style.borderColor='var(--border)';"
+                             ondrop="event.preventDefault(); this.style.borderColor='var(--border)'; handleCnUploadFile(event.dataTransfer.files[0]);">
                             <span id="inf-cn-text">Drop ControlNet Reference</span>
                             <img id="inf-cn-preview" style="position: absolute; top:0; left:0; width:100%; height:100%; object-fit: cover; display: none; opacity: 0.6;">
-                            <input type="file" id="inf-cn-file" accept="image/*" style="display: none;" onchange="handleCnUpload(event)">
+                            <input type="file" id="inf-cn-file" accept="image/*" style="display: none;" onchange="handleCnUploadFile(this.files[0])">
                         </div>
                         <div style="display: flex; gap: 15px;">
                             <div style="flex: 1;">
@@ -675,26 +1106,32 @@
             </div>
             </div>
         </div>
-            
+
+        <!-- Resizer Handle L -->
+        <div class="col-resizer" id="resizer-left" style="width:6px;cursor:col-resize;background:transparent;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:background 0.2s;" onmouseenter="this.style.background='var(--border)'" onmouseleave="if(!window._resizing)this.style.background='transparent'">
+            <div style="width:2px;height:40px;border-radius:2px;background:var(--border);"></div>
+        </div>
+
         <!-- Middle Column: Prompts -->
-        <div style="width: 360px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; padding-right: 10px;">
+        <div id="inf-col-mid" style="width: 340px; min-width:200px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; padding: 0 10px; flex-shrink:0;">
             <!-- Prompts -->
             <div style="background: var(--surface); border-radius: 12px; border: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column;">
                 <label class="section-title">Prompt</label>
                 <textarea id="inf-prompt" style="flex: 1; outline: none; background: var(--bg-color); border: 1px solid var(--border); color: #fff; padding: 15px; border-radius: 8px; resize: vertical; min-height: 100px; font-size: 1rem; font-family: inherit; margin-bottom: 20px;" placeholder="masterpiece, best quality, highly detailed..."></textarea>
                 
-                <label class="section-title">Negative Prompt</label>
-                <textarea id="inf-negative" style="flex: 1; outline: none; background: var(--bg-color); border: 1px solid var(--border); color: #fff; padding: 15px; border-radius: 8px; resize: vertical; min-height: 100px; font-size: 1rem; font-family: inherit;" placeholder="worst quality, low quality, blurry..."></textarea>
+                <div id="inf-sd-neg-row"><label class="section-title">Negative Prompt</label>
+                <textarea id="inf-negative" style="flex: 1; outline: none; background: var(--bg-color); border: 1px solid var(--border); color: #fff; padding: 15px; border-radius: 8px; resize: vertical; min-height: 100px; font-size: 1rem; font-family: inherit;" placeholder="worst quality, low quality, blurry..."></textarea></div>
                 
                 <div style="margin-top: 20px;">
-                    <label class="section-title">Image-to-Image (Optional Reference Input)</label>
+                    <label class="section-title">Image-to-Image (Optional)</label>
                     <div id="inf-img2img-dropzone" style="border: 2px dashed var(--border); padding: 20px; text-align: center; border-radius: 8px; cursor: pointer; color: var(--text-muted); position: relative; overflow: hidden; height: 120px; display: flex; align-items: center; justify-content: center; background: var(--bg-color);" 
                          onclick="document.getElementById('inf-img2img-file').click()"
-                             ondragover="event.preventDefault();"
-                             ondrop="event.preventDefault(); if(event.dataTransfer.files.length) { document.getElementById('inf-img2img-file').files = event.dataTransfer.files; handleImg2ImgUpload({target: document.getElementById('inf-img2img-file')}); }">
-                        <span id="inf-img2img-text">Drag & Drop Base Image Here or Click</span>
+                             ondragover="event.preventDefault(); this.style.borderColor='var(--primary)';"
+                             ondragleave="this.style.borderColor='var(--border)';"
+                             ondrop="event.preventDefault(); this.style.borderColor='var(--border)'; handleDropOnImg2Img(event);">
+                        <span id="inf-img2img-text">Drag &amp; Drop Base Image Here or Click</span>
                         <img id="inf-img2img-preview" style="position: absolute; top:0; left:0; width:100%; height:100%; object-fit: cover; display: none; opacity: 0.6;">
-                        <input type="file" id="inf-img2img-file" accept="image/*" style="display: none;" onchange="handleImg2ImgUpload(event)">
+                        <input type="file" id="inf-img2img-file" accept="image/*" style="display: none;" onchange="handleImg2ImgUploadFile(this.files[0])">
                     </div>
                     <div style="display: flex; gap: 15px; margin-top: 10px;">
                         <div style="flex: 1;">
@@ -705,26 +1142,37 @@
                     </div>
                 </div>
             </div>
-            
-            <div style="background: var(--surface); border-radius: 12px; border: 1px solid var(--border); padding: 20px; margin-bottom: 20px;">
-                <button class="btn-download" id="inf-generate-btn" onclick="executeInference()" style="position: relative; overflow: hidden; height: 60px; font-size: 1.2rem;">
+        </div>
+
+        <!-- Resizer Handle R -->
+        <div class="col-resizer" id="resizer-right" style="width:6px;cursor:col-resize;background:transparent;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:background 0.2s;" onmouseenter="this.style.background='var(--border)'" onmouseleave="if(!window._resizing)this.style.background='transparent'">
+            <div style="width:2px;height:40px;border-radius:2px;background:var(--border);"></div>
+        </div>
+
+        <!-- Right Column: Output + Gallery -->
+        <div id="inf-col-right" style="flex: 1; min-width:200px; background: var(--surface); border-radius: 12px; border: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden;">
+            <!-- Generate button above canvas -->
+            <div style="padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink:0;">
+                <button class="btn-download" id="inf-generate-btn" onclick="executeInference()" style="position: relative; overflow: hidden; height: 50px; font-size: 1.1rem; width:100%;">
                     <div id="inf-progress-fill" style="position: absolute; top: 0; left: 0; height: 100%; width: 0%; background: rgba(59, 130, 246, 0.4); transition: width 0.1s linear; pointer-events: none;"></div>
                     <span id="inf-generate-text" style="position: relative; z-index: 2;">Generate Image</span>
                 </button>
             </div>
-        </div>
-
-        <!-- Right Column: Gallery -->
-        <div style="flex: 1; background: var(--surface); border-radius: 12px; border: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden;">
-            <div style="flex: 1; display: flex; align-items: center; justify-content: center; background: #000; position: relative;" id="inf-canvas-container">
-                <img id="inf-canvas-img" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;" src="">
-                <div id="inf-canvas-empty" style="color: var(--text-muted); font-size: 1.1rem; font-weight: 500;">No Output</div>
+            <!-- Canvas output -->
+            <div style="flex: 1; display: flex; align-items: center; justify-content: center; background: #000; position: relative; overflow:hidden; cursor:crosshair;" id="inf-canvas-container"
+                 ondragover="event.preventDefault();"
+                 ondrop="event.preventDefault(); restoreFromGalleryDrop(event);">
+                <img id="inf-canvas-img" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none; transform-origin: center center; transition: transform 0.1s;" src="">
+                <div id="inf-canvas-empty" style="color: var(--text-muted); font-size: 1.1rem; font-weight: 500; pointer-events:none;">No Output</div>
             </div>
-            <div style="height: 130px; border-top: 1px solid var(--border); padding: 10px; display: flex; gap: 10px; overflow-x: auto; background: var(--surface-hover);" id="inf-gallery">
+            <!-- Gallery strip -->
+            <div style="height: 130px; border-top: 1px solid var(--border); padding: 10px; display: flex; gap: 10px; overflow-x: auto; background: var(--surface-hover); flex-shrink:0;" id="inf-gallery">
             </div>
         </div>
     </div>
-    
+
+
+
     <!-- End Main Content -->
     </div>
 
@@ -760,8 +1208,145 @@
             }
         }
 
-        async function handleImg2ImgUpload(e) {
-            const file = e.target.files[0];
+        /* ═══════ FLUX MODEL SUPPORT ═══════ */
+        const SD_ONLY_IDS  = ['inf-sd-refiner-row','inf-sd-model-row','inf-sd-cfg-row','inf-sd-cn-row','inf-sd-neg-row'];
+        const FLUX_ONLY_IDS = ['inf-flux-unet-row','inf-flux-clip-l-row','inf-flux-t5xxl-row'];
+
+        function onModelTypeChange(type) {
+            const isFlux = type==='flux-dev'||type==='flux-schnell';
+            SD_ONLY_IDS.forEach(id => { const el=document.getElementById(id); if(el) el.style.display=isFlux?'none':''; });
+            FLUX_ONLY_IDS.forEach(id => { const el=document.getElementById(id); if(el) el.style.display=isFlux?'':'none'; });
+            const gRow=document.getElementById('inf-flux-guidance-row');
+            if(gRow) gRow.style.display=(type==='flux-dev')?'':'none';
+            if(type==='flux-schnell') document.getElementById('inf-steps').value=4;
+            if(type==='flux-dev') document.getElementById('inf-steps').value=20;
+        }
+
+        function autoDetectModelType(filename) {
+            const sel=document.getElementById('inf-model-type');
+            if(sel.value!=='auto') return;
+            const lower=(filename||'').toLowerCase();
+            if(lower.includes('flux')||lower.includes('f1-')) {
+                const type=lower.includes('schnell')?'flux-schnell':'flux-dev';
+                sel.value=type; onModelTypeChange(type);
+            } else { onModelTypeChange('sd'); }
+        }
+
+        function onEngineChange(type) {
+            console.log("Switched inference engine to: " + type);
+        }
+
+        async function executeFluxInference() {
+            const modelType=document.getElementById('inf-model-type').value;
+            const unet_name=document.getElementById('inf-flux-unet').value;
+            const clip_l=document.getElementById('inf-flux-clip-l').value;
+            const t5xxl=document.getElementById('inf-flux-t5xxl').value;
+            const vae_name=document.getElementById('inf-vae').value;
+            const prompt=document.getElementById('inf-prompt').value;
+            const seed=parseInt(document.getElementById('inf-seed').value);
+            const actualSeed=seed===-1?Math.floor(Math.random()*1e15):seed;
+            const steps=parseInt(document.getElementById('inf-steps').value);
+            const width=parseInt(document.getElementById('inf-width').value);
+            const height=parseInt(document.getElementById('inf-height').value);
+            const guidance=parseFloat(document.getElementById('inf-flux-guidance')?.value||3.5);
+            const isSchnell=modelType==='flux-schnell';
+            if(!unet_name) return alert('Select a FLUX UNET model!');
+            if(!clip_l) return alert('Select a CLIP-L encoder!');
+            if(!t5xxl) return alert('Select a T5-XXL encoder!');
+
+            const workflow={
+                "1":{"inputs":{"unet_name":unet_name,"weight_dtype":"default"},"class_type":"UNETLoader"},
+                "2":{"inputs":{"clip_name1":clip_l,"clip_name2":t5xxl,"type":"flux"},"class_type":"DualCLIPLoader"},
+                "3":{"inputs":{"vae_name":(vae_name!=='none'?vae_name:"ae.safetensors")},"class_type":"VAELoader"},
+                "4":{"inputs":{"text":prompt,"clip":["2",0]},"class_type":"CLIPTextEncode"},
+                "5":{"inputs":{"width":width,"height":height,"batch_size":1},"class_type":"EmptySD3LatentImage"},
+                "7":{"inputs":{"max_shift":isSchnell?0.5:1.15,"base_shift":0.5,"width":width,"height":height,"model":["1",0]},"class_type":"ModelSamplingFlux"},
+                "10":{"inputs":{"text":"","clip":["2",0]},"class_type":"CLIPTextEncode"}
+            };
+            let positiveCond=["4",0],modelSource=["7",0];
+            if(!isSchnell){ workflow["6"]={"inputs":{"guidance":guidance,"conditioning":["4",0]},"class_type":"FluxGuidance"}; positiveCond=["6",0]; }
+            let latentSource=["5",0];
+            if(window.comfyUploadedImg2Img){
+                workflow["11"]={"inputs":{"image":window.comfyUploadedImg2Img},"class_type":"LoadImage"};
+                workflow["12"]={"inputs":{"pixels":["11",0],"vae":["3",0]},"class_type":"VAEEncode"};
+                latentSource=["12",0];
+            }
+            workflow["8"]={"inputs":{"seed":actualSeed,"steps":steps,"cfg":1.0,"sampler_name":"euler","scheduler":isSchnell?"simple":"beta","denoise":1.0,"model":modelSource,"positive":positiveCond,"negative":["10",0],"latent_image":latentSource},"class_type":"KSampler"};
+            workflow["9"]={"inputs":{"samples":["8",0],"vae":["3",0]},"class_type":"VAEDecode"};
+            workflow["20"]={"inputs":{"filename_prefix":"AIManager_FLUX","images":["9",0]},"class_type":"SaveImage"};
+
+            const doHires=document.getElementById('inf-hires-enable').checked;
+            if(doHires){
+                const hF=parseFloat(document.getElementById('inf-hires-factor').value);
+                const hSt=parseInt(document.getElementById('inf-hires-steps').value);
+                const hDen=parseFloat(document.getElementById('inf-hires-denoise').value);
+                const upP=getHiresUpscalerParams(document.getElementById('inf-hires-upscaler').value);
+                let upL;
+                if(upP.type==='latent'){ workflow["300"]={"inputs":{"upscale_method":upP.method,"scale_by":hF,"samples":["8",0]},"class_type":"LatentUpscaleBy"}; upL=["300",0]; }
+                else{ workflow["301"]={"inputs":{"samples":["8",0],"vae":["3",0]},"class_type":"VAEDecode"}; workflow["302"]={"inputs":{"upscale_method":"bicubic","scale_by":hF,"image":["301",0]},"class_type":"ImageScaleBy"}; workflow["303"]={"inputs":{"pixels":["302",0],"vae":["3",0]},"class_type":"VAEEncode"}; upL=["303",0]; }
+                workflow["305"]={"inputs":{"seed":actualSeed+1,"steps":hSt,"cfg":1.0,"sampler_name":"euler","scheduler":"simple","denoise":hDen,"model":modelSource,"positive":positiveCond,"negative":["10",0],"latent_image":upL},"class_type":"KSampler"};
+                workflow["9"]["inputs"]["samples"]=["305",0];
+            }
+
+            const btn=document.getElementById('inf-generate-btn');
+            const txt=document.getElementById('inf-generate-text');
+            const fill=document.getElementById('inf-progress-fill');
+            fill.style.width='0%'; btn.disabled=true; txt.innerText="Queueing FLUX...";
+            document.getElementById('inf-canvas-img').style.display='none';
+            document.getElementById('inf-canvas-empty').style.display='block';
+            document.getElementById('inf-canvas-empty').innerText="Running FLUX...";
+            try{
+                const res=await fetch('/api/comfy_proxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:'/prompt',payload:{prompt:workflow}})});
+                const data=await res.json();
+                if(data.error) throw new Error(data.error.message||'ComfyUI FLUX Error');
+                window.currentPromptId=data.prompt_id; txt.innerText="Processing FLUX...";
+                if(window.comfyPollInterval) clearInterval(window.comfyPollInterval);
+                window.comfyPollInterval=setInterval(async()=>{
+                    try{
+                        const hR=await fetch('/api/comfy_proxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:`/history/${window.currentPromptId}`})});
+                        const hD=await hR.json();
+                        if(hD[window.currentPromptId]){
+                            clearInterval(window.comfyPollInterval);
+                            for(const nid in hD[window.currentPromptId].outputs){
+                                const outs=hD[window.currentPromptId].outputs[nid];
+                                if(outs.images&&outs.images.length>0){
+                                    const iD=outs.images[0];
+                                    const iUrl=`/api/comfy_image?filename=${iD.filename}&subfolder=${iD.subfolder}&type=${iD.type}&t=${Date.now()}`;
+                                    const cv=document.getElementById('inf-canvas-img');
+                                    cv.src=iUrl; cv.style.display='block';
+                                    document.getElementById('inf-canvas-empty').style.display='none';
+                                    addToGallery(iUrl,workflow);
+                                    btn.disabled=false; txt.innerText="Generate Image"; fill.style.width='0%'; break;
+                                }
+                            }
+                        } else { const p=parseFloat(fill.style.width||'0'); fill.style.width=Math.min(90,p+1.5)+'%'; }
+                    } catch(e){}
+                },1200);
+            } catch(e){ alert("FLUX generation failed: "+e.message); btn.disabled=false; txt.innerText="Generate Image"; }
+        }
+        /* --- Smart Img2Img Drop Handler: supports OS files AND gallery drags --- */
+        async function handleDropOnImg2Img(e) {
+            // Check for gallery drag first (custom MIME type, no files)
+            const galleryUrl = e.dataTransfer.getData('application/x-gallery-img');
+            if(galleryUrl) {
+                try {
+                    const res = await fetch(galleryUrl);
+                    const blob = await res.blob();
+                    const ext = blob.type.includes('png') ? 'png' : 'jpg';
+                    const file = new File([blob], 'gallery_image.' + ext, { type: blob.type });
+                    await handleImg2ImgUploadFile(file);
+                } catch(err) {
+                    alert('Failed to load gallery image: ' + err.message);
+                }
+                return;
+            }
+            // Fall back to OS file drop
+            if(e.dataTransfer.files && e.dataTransfer.files.length) {
+                await handleImg2ImgUploadFile(e.dataTransfer.files[0]);
+            }
+        }
+
+        async function handleImg2ImgUploadFile(file) {
             if(!file) return;
             const reader = new FileReader();
             reader.onload = (ev) => {
@@ -774,6 +1359,11 @@
             window.comfyUploadedImg2Img = await uploadFileToProxy(file);
         }
         
+        // Legacy alias kept for compatibility
+        async function handleImg2ImgUpload(e) {
+            return handleImg2ImgUploadFile(e.target.files[0]);
+        }
+        
         function clearImg2Img() {
             window.comfyUploadedImg2Img = null;
             document.getElementById('inf-img2img-file').value = "";
@@ -781,8 +1371,7 @@
             document.getElementById('inf-img2img-text').style.display = 'block';
         }
 
-        async function handleCnUpload(e) {
-            const file = e.target.files[0];
+        async function handleCnUploadFile(file) {
             if(!file) return;
             const reader = new FileReader();
             reader.onload = (ev) => {
@@ -793,6 +1382,169 @@
             };
             reader.readAsDataURL(file);
             window.comfyUploadedCn = await uploadFileToProxy(file);
+        }
+
+        // Legacy alias kept for compatibility
+        async function handleCnUpload(e) {
+            return handleCnUploadFile(e.target.files[0]);
+        }
+
+        /* --- Scroll-to-Zoom on Output Canvas --- */
+        (function() {
+            let _zoom = 1.0;
+            document.addEventListener('DOMContentLoaded', () => {
+                const container = document.getElementById('inf-canvas-container');
+                const img = document.getElementById('inf-canvas-img');
+                if(!container || !img) return;
+                container.addEventListener('wheel', (e) => {
+                    if(img.style.display === 'none') return;
+                    e.preventDefault();
+                    _zoom = Math.min(8, Math.max(0.2, _zoom * (e.deltaY < 0 ? 1.12 : 0.9)));
+                    img.style.transform = `scale(${_zoom})`;
+                }, { passive: false });
+                container.addEventListener('dblclick', () => {
+                    _zoom = 1.0;
+                    img.style.transform = 'scale(1)';
+                });
+            });
+        })();
+
+        /* --- Column Resizer Drag Handles --- */
+        (function() {
+            function initResizer(handle, leftCol, rightCol) {
+                handle.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    window._resizing = true;
+                    handle.style.background = 'var(--primary)';
+                    const startX = e.clientX;
+                    const startLeft = leftCol.offsetWidth;
+                    const startRight = rightCol.offsetWidth;
+                    function onMove(ev) {
+                        const dx = ev.clientX - startX;
+                        const newLeft = Math.max(180, startLeft + dx);
+                        const newRight = Math.max(180, startRight - dx);
+                        leftCol.style.width = newLeft + 'px';
+                        leftCol.style.flexBasis = newLeft + 'px';
+                        rightCol.style.width = newRight + 'px';
+                        rightCol.style.flexBasis = newRight + 'px';
+                    }
+                    function onUp() {
+                        window._resizing = false;
+                        handle.style.background = 'transparent';
+                        document.removeEventListener('mousemove', onMove);
+                        document.removeEventListener('mouseup', onUp);
+                    }
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                });
+            }
+            document.addEventListener('DOMContentLoaded', () => {
+                const lh = document.getElementById('resizer-left');
+                const rh = document.getElementById('resizer-right');
+                const colL = document.getElementById('inf-col-left');
+                const colM = document.getElementById('inf-col-mid');
+                const colR = document.getElementById('inf-col-right');
+                if(lh && colL && colM) initResizer(lh, colL, colM);
+                if(rh && colM && colR) initResizer(rh, colM, colR);
+            });
+        })();
+
+        /* --- Persistent Gallery: Save to DB + Update UI --- */
+        async function saveToGallery(imgUrl, workflow) {
+            // Extract metadata from UI for cleaner gallery storage
+            const prompt = document.getElementById('inf-prompt').value;
+            const negative = document.getElementById('inf-negative').value;
+            const model = document.getElementById('inf-model').value;
+            const seed = parseInt(document.getElementById('inf-seed').value);
+            const steps = parseInt(document.getElementById('inf-steps').value);
+            const cfg = parseFloat(document.getElementById('inf-cfg').value);
+            const sampler = document.getElementById('inf-sampler').value;
+            const width = parseInt(document.getElementById('inf-width').value);
+            const height = parseInt(document.getElementById('inf-height').value);
+
+            const payload = {
+                image_path: imgUrl,
+                prompt, negative, model, seed, steps, cfg, sampler, width, height,
+                extra: { workflow }
+            };
+
+            try {
+                await fetch('/api/gallery/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+            } catch(e) {
+                console.warn("Failed to save to gallery DB:", e);
+            }
+        }
+
+        function addToGallery(imgUrl, promptObj) {
+            // 1. Add to the transient horizontal strip in Studio
+            const gal = document.getElementById('inf-gallery');
+            if(!gal) return;
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'position:relative;flex-shrink:0;height:110px;cursor:pointer;border-radius:8px;overflow:hidden;border:2px solid transparent;transition:border-color 0.2s;';
+            wrap.title = 'Click to view · Drag to canvas to restore settings';
+
+            const thumb = document.createElement('img');
+            thumb.src = imgUrl;
+            thumb.style.cssText = 'height:100%;width:auto;display:block;pointer-events:none;';
+            thumb.draggable = false;
+
+            wrap.dataset.imgUrl = imgUrl;
+            wrap.dataset.prompt = JSON.stringify(promptObj);
+
+            wrap.addEventListener('mouseenter', () => wrap.style.borderColor = 'var(--primary)');
+            wrap.addEventListener('mouseleave', () => wrap.style.borderColor = 'transparent');
+            wrap.addEventListener('click', () => {
+                const canvasImg = document.getElementById('inf-canvas-img');
+                canvasImg.src = imgUrl;
+                canvasImg.style.display = 'block';
+                document.getElementById('inf-canvas-empty').style.display = 'none';
+            });
+
+            wrap.draggable = true;
+            wrap.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('application/x-gallery-img', imgUrl);
+                e.dataTransfer.setData('application/x-gallery-prompt', wrap.dataset.prompt);
+                e.dataTransfer.effectAllowed = 'copy';
+            });
+
+            wrap.appendChild(thumb);
+            gal.insertBefore(wrap, gal.firstChild);
+
+            // 2. Persist to DB
+            saveToGallery(imgUrl, promptObj);
+        }
+
+        /* --- Gallery Drop on Canvas: show image + restore settings --- */
+        function restoreFromGalleryDrop(e) {
+            const imgUrl = e.dataTransfer.getData('application/x-gallery-img');
+            const promptStr = e.dataTransfer.getData('application/x-gallery-prompt');
+            if(imgUrl) {
+                const canvasImg = document.getElementById('inf-canvas-img');
+                canvasImg.src = imgUrl;
+                canvasImg.style.display = 'block';
+                document.getElementById('inf-canvas-empty').style.display = 'none';
+            }
+            if(promptStr) {
+                try { repopulateUI(JSON.parse(promptStr)); } catch(ex) {}
+            } else if(e.dataTransfer.files && e.dataTransfer.files.length) {
+                restoreMetadataFromDrop(e);
+            }
+        }
+
+        /* --- Hires Upscaler: map UI value to ComfyUI node params --- */
+        function getHiresUpscalerParams(val) {
+            const latentMethods = {
+                'latent_nearest': 'nearest',
+                'latent_bilinear': 'bilinear',
+                'latent_bicubic': 'bicubic',
+                'latent_nearest_exact': 'nearest-exact'
+            };
+            if(latentMethods[val]) return { type: 'latent', method: latentMethods[val] };
+            return { type: 'esrgan', model: val }; // esrgan_4x, esrgan_4x_anime, swinir_4x etc.
         }
 
         function addLoraSlot() {
@@ -831,12 +1583,21 @@
             container.appendChild(row);
         }
 
-        function switchTab(tabId) {
-            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-            event.currentTarget.classList.add('active');
+        function switchTab(tabId, el) {
+            document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
+            if (el) el.classList.add('active');
+            else {
+                // Fallback: Find nav item matching tabId
+                document.querySelectorAll('.nav-item').forEach(e => {
+                    if (e.getAttribute('onclick') && e.getAttribute('onclick').includes(`'${tabId}'`)) {
+                        e.classList.add('active');
+                    }
+                });
+            }
             
             document.getElementById('view-explorer').style.display = 'none';
             document.getElementById('view-vault').style.display = 'none';
+            document.getElementById('view-creations').style.display = 'none';
             document.getElementById('view-inference').style.display = 'none';
             document.getElementById('view-appstore').style.display = 'none';
             document.getElementById('view-packages').style.display = 'none';
@@ -855,7 +1616,12 @@
                 document.getElementById('view-vault').style.display = 'block';
                 document.getElementById('page-title').innerText = 'Global Vault';
                 document.getElementById('page-subtitle').innerText = 'Managing your centralized AI assets.';
-                loadModels();
+                loadModels(false);
+            } else if(tabId === 'creations') {
+                document.getElementById('view-creations').style.display = 'block';
+                document.getElementById('page-title').innerText = 'My Creations';
+                document.getElementById('page-subtitle').innerText = 'Your generation history, beautifully organized.';
+                loadGallery();
             } else if (tabId === 'appstore') {
                 document.getElementById('view-appstore').style.display = 'block';
                 document.getElementById('page-title').innerText = 'App Store';
@@ -869,10 +1635,242 @@
             }
         }
 
+        /* ═══════════════════════════════════════════════
+           DRAG-AND-DROP IMPORT ENGINE
+        ═══════════════════════════════════════════════ */
+        let _pendingImportFiles = [];
+        let _activeImportId = null;
+
+        function handleVaultFileDrop(event) {
+            const files = Array.from(event.dataTransfer.files).filter(f =>
+                /\.(safetensors|ckpt|pt|bin)$/i.test(f.name)
+            );
+            if(!files.length) return;
+            openImportDialog(files);
+        }
+
+        function handleVaultFileInput(fileList) {
+            const files = Array.from(fileList).filter(f =>
+                /\.(safetensors|ckpt|pt|bin)$/i.test(f.name)
+            );
+            if(!files.length) return;
+            openImportDialog(files);
+        }
+
+        function openImportDialog(files) {
+            _pendingImportFiles = files;
+            window._importDone = false;
+            document.getElementById('import-filename').innerText = files.map(f => f.name).join(', ');
+            document.getElementById('import-bar').style.width = '0%';
+            document.getElementById('import-status-msg').innerText = 'Select a category, then click Start Import.';
+            document.getElementById('import-cat-row').style.display = 'block';
+            document.getElementById('import-start-btn').style.display = 'inline-block';
+            document.getElementById('import-progress-modal').style.display = 'flex';
+        }
+
+        async function commitImport() {
+            if(!_pendingImportFiles.length) return;
+            const category = document.getElementById('import-category').value;
+            const apiKey = localStorage.getItem('civitai_api_key') || '';
+            
+            document.getElementById('import-start-btn').style.display = 'none';
+            document.getElementById('import-cat-row').style.display = 'none';
+            document.getElementById('import-status-msg').innerText = 'Starting import...';
+
+            // For browser file drops we pass the full path via a special header
+            // The file object has a .path property on desktop Electron/webview;
+            // for standard browsers we use the file name and rely on a temp-upload approach.
+            // Here we send the file.path (works when running locally on the same machine).
+            const file = _pendingImportFiles[0]; // Process one at a time
+            const filePath = file.path || file.name;
+
+            try {
+                const res = await fetch('/api/import', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ path: filePath, category, api_key: apiKey })
+                });
+                const data = await res.json();
+                if(data.import_id) {
+                    _activeImportId = data.import_id;
+                    pollImport(_activeImportId);
+                } else {
+                    document.getElementById('import-status-msg').innerText = '❌ ' + (data.message || 'Unknown error');
+                }
+            } catch(e) {
+                document.getElementById('import-status-msg').innerText = '❌ Network error: ' + e.message;
+            }
+        }
+
+        function pollImport(importId) {
+            const interval = setInterval(async () => {
+                try {
+                    const res = await fetch(`/api/import/status?id=${importId}`);
+                    const data = await res.json();
+                    
+                    document.getElementById('import-bar').style.width = (data.progress || 0) + '%';
+                    document.getElementById('import-status-msg').innerText = data.message || '...';
+
+                    if(data.status === 'done') {
+                        clearInterval(interval);
+                        window._importDone = true;
+                        document.getElementById('import-progress-modal').style.display = 'none';
+                        showDependencyResolver(data);
+                    } else if(data.status === 'error') {
+                        clearInterval(interval);
+                        window._importDone = true;
+                        document.getElementById('import-status-msg').innerText = '❌ ' + data.message;
+                        document.getElementById('import-start-btn').style.display = 'inline-block';
+                        document.getElementById('import-start-btn').innerText = 'Close';
+                        document.getElementById('import-start-btn').onclick = () => 
+                            document.getElementById('import-progress-modal').style.display = 'none';
+                    }
+                } catch(e) {
+                    clearInterval(interval);
+                }
+            }, 1000);
+        }
+
+        function showDependencyResolver(importData) {
+            const modelName = importData.metadata?.model?.name || importData.filename || 'Model';
+            document.getElementById('dep-model-name').innerText = `"${modelName}" has been imported successfully.`;
+            
+            const depList = document.getElementById('dep-list');
+            const deps = importData.deps || [];
+            
+            if(!deps.length) {
+                depList.innerHTML = '<div style="color:var(--text-muted);font-size:0.9rem;">No dependencies detected. You\'re all set!</div>';
+            } else {
+                depList.innerHTML = deps.map((dep, i) => `
+                    <div style="background:var(--bg-color); border:1px solid var(--border); border-radius:10px; padding:14px; display:flex; align-items:center; gap:12px;">
+                        <div style="flex:1;">
+                            <div style="font-weight:600; font-size:0.9rem;">${dep.name}</div>
+                            <div style="color:var(--text-muted); font-size:0.8rem;">${dep.type}</div>
+                        </div>
+                        ${dep.civitai_url ? `<a href="${dep.civitai_url}" target="_blank" style="color:var(--primary);font-size:0.8rem;text-decoration:none;font-weight:600;">View →</a>` : ''}
+                        <button onclick="quickDownloadDep('${dep.civitai_id}')" style="background:var(--primary);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">Install</button>
+                    </div>
+                `).join('');
+            }
+            document.getElementById('dep-resolver-modal').style.display = 'flex';
+        }
+
+        async function quickDownloadDep(civitaiModelId) {
+            if(!civitaiModelId) return;
+            // Open the lightbox for this dep so user can pick version
+            window.open(`https://civitai.com/models/${civitaiModelId}`, '_blank');
+        }
+
+        /* ═══════════════════════════════════════════════
+           VAULT CLIENT-SIDE FILTERING
+        ═══════════════════════════════════════════════ */
+        let _allVaultModels = [];
+
+        function filterVaultGrid(query) {
+            const cat = document.getElementById('vault-cat-filter').value.toLowerCase();
+            const tag = document.getElementById('vault-tag-filter').value.toLowerCase();
+            const q = (query || '').toLowerCase();
+            const grid = document.getElementById('models-grid');
+            
+            Array.from(grid.children).forEach(card => {
+                const cardCat = (card.dataset.category || '').toLowerCase();
+                const cardName = (card.dataset.name || '').toLowerCase();
+                const cardTags = (card.dataset.tags || '').toLowerCase();
+                const matchesCat = !cat || cardCat === cat;
+                const matchesTag = !tag || cardTags.includes(tag);
+                // Local filter acts only on name if not performing semantic search
+                const matchesQ = !q || cardName.includes(q);
+                card.style.display = (matchesCat && matchesTag && matchesQ) ? '' : 'none';
+            });
+        }
+
+        async function filterVaultByTag(tag) {
+            filterVaultGrid(document.getElementById('vault-search').value);
+        }
+
+        async function searchVaultModels(query) {
+            if(!query.trim()) {
+                window._semanticSearchActive = false;
+                loadModels(false);
+                return;
+            }
+            window._semanticSearchActive = true;
+            document.getElementById('models-grid').innerHTML = '<div class="empty-state">Searching vault via Semantic Embeddings...</div>';
+            try {
+                const res = await fetch(`/api/vault/search?query=${encodeURIComponent(query)}&limit=40`);
+                const data = await res.json();
+                renderVaultGrid(data.results || [], false);
+                document.getElementById('vault-load-more-container').style.display = 'none'; // Disable pagination for semantic search for now
+            } catch(e) {
+                console.error("Semantic search failed:", e);
+                document.getElementById('models-grid').innerHTML = '<div class="empty-state">Semantic search failed or indexing in progress.</div>';
+            }
+        }
+
+
+        /* ═══════════════════════════════════════════════
+           MY CREATIONS GALLERY (Feature 2 stub — wired up)
+        ═══════════════════════════════════════════════ */
+        let _galleryData = [];
+
+        async function loadGallery() {
+            const sort = document.getElementById('gallery-sort')?.value || 'newest';
+            try {
+                const res = await fetch(`/api/gallery?sort=${sort}`);
+                if(!res.ok) throw new Error('No gallery data');
+                const data = await res.json();
+                _galleryData = data.generations || [];
+                renderGallery(_galleryData);
+            } catch(e) {
+                // Gallery endpoint not yet available — show placeholder
+                document.getElementById('gallery-grid').innerHTML = '<div class="empty-state">No generations yet. Create something in the Inference Studio!</div>';
+            }
+        }
+
+             function filterGallery(query) {
+            const q = query.toLowerCase();
+            const filtered = _galleryData.filter(g =>
+                (g.prompt || '').toLowerCase().includes(q) ||
+                (g.model || '').toLowerCase().includes(q)
+            );
+            renderGallery(filtered);
+        }
+
+        function renderGallery(items) {
+            const grid = document.getElementById('gallery-grid');
+            if(!items.length) {
+                grid.innerHTML = '<div class="empty-state">No creations found.</div>';
+                return;
+            }
+            grid.innerHTML = items.map(g => `
+                <div class="card" onclick="openGalleryItem(${g.id})">
+                    <div class="card-img-container" style="padding-top:100%;">
+                        <img class="card-img" src="${g.image_path}" loading="lazy">
+                    </div>
+                    <div class="card-banner" style="background:var(--surface);">
+                        <h3 style="font-size:0.85rem; height:1.2rem; overflow:hidden;">${g.prompt || 'Untitled'}</h3>
+                        <div class="card-meta-row">
+                            <span>${g.model}</span>
+                            <span>${new Date(g.created_at).toLocaleDateString()}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function openGalleryItem(id) {
+            const g = _galleryData.find(x => x.id === id);
+            if(!g) return;
+            // Future: open gallery lightbox with full params + "Send to Studio"
+            alert(`Prompt: ${g.prompt || 'N/A'}\nModel: ${g.model}\nSeed: ${g.seed}`);
+        }
+
         /* --- CivitAI Explorer Integration --- */
         let installedHashes = new Set(); // To cross-check installed models
         window.cardState = {}; // Carousel indexes
         window.onlyNsfw = false;
+        let vaultOffset = 0;
+        const vaultLimit = 40;
         
         function handleNsfwClick(e) {
             e.preventDefault();
@@ -884,7 +1882,8 @@
 
         async function loadExplorer() {
             const grid = document.getElementById('explorer-grid');
-            grid.innerHTML = '<div class="empty-state">Fetching CivitAI Catalog...</div>';
+            const source = document.getElementById('ex-source').value;
+            grid.innerHTML = `<div class="empty-state">Fetching ${source==='huggingface'?'Hugging Face':'CivitAI'} Catalog...</div>`;
             
             if(installedHashes.size === 0) {
                 try {
@@ -908,6 +1907,22 @@
             }
 
             const q = document.getElementById('ex-search').value;
+
+            if(source === 'huggingface') {
+                try {
+                    const hfRes = await fetch(`/api/hf/search?query=${encodeURIComponent(q)}&limit=40`);
+                    const hfData = await hfRes.json();
+                    if(hfData.status === 'success') {
+                        renderExplorerGrid(hfData.items);
+                    } else {
+                        grid.innerHTML = `<div class="empty-state" style="color:#ef4444;">HF Error: ${hfData.message}</div>`;
+                    }
+                } catch(e) {
+                    grid.innerHTML = `<div class="empty-state" style="color:#ef4444;">HF Search Failed: ${e.message}</div>`;
+                }
+                return;
+            }
+
             const type = document.getElementById('ex-type').value;
             const base = document.getElementById('ex-base').value;
             const nsfw = document.getElementById('ex-nsfw').checked ? 'true' : 'false';
@@ -1063,13 +2078,66 @@
             });
             
             // Load Tags
-            const tagsCont = document.getElementById('lb-tags-container');
-            tagsCont.innerHTML = '';
-            (m.tags || []).slice(0, 8).forEach(t => {
-                tagsCont.innerHTML += `<span class="badge" style="background:var(--surface-hover);">${t}</span>`;
-            });
+            renderLightboxTags(m.tags || []);
+            
+            // Show new tag input only in Vault mode
+            document.getElementById('lb-tagging-controls').style.display = window.isVaultMode ? 'block' : 'none';
 
             document.getElementById('lightbox').style.display = 'flex';
+        }
+
+        function renderLightboxTags(tagsObjList) {
+            const tagsCont = document.getElementById('lb-tags-container');
+            tagsCont.innerHTML = '';
+            tagsObjList.forEach(t => {
+                const tagName = typeof t === 'string' ? t : t.name;
+                tagsCont.innerHTML += `
+                    <span class="badge" style="background:var(--surface-hover); display:flex; align-items:center; gap:5px;">
+                        ${tagName}
+                        ${window.isVaultMode ? `<button onclick="removeVaultTag('${tagName}')" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:0.8rem; padding:0; margin-left:4px;">&times;</button>` : ''}
+                    </span>
+                `;
+            });
+        }
+
+        async function addVaultTag(tagName) {
+            const tag = tagName.trim();
+            if(!tag || !window.currentVaultFilename) return;
+            document.getElementById('lb-new-tag').value = '';
+            
+            try {
+                const res = await fetch('/api/vault/tag/add', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({filename: window.currentVaultFilename, category: window.currentVaultCategory, tag: tag})
+                });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    if(!currentModalModel.tags) currentModalModel.tags = [];
+                    // Avoid dupes locally
+                    if(!currentModalModel.tags.find(t => (t.name === tag || t === tag))) {
+                        currentModalModel.tags.push({name: tag});
+                        renderLightboxTags(currentModalModel.tags);
+                        loadVaultTags(); // refresh filter list
+                    }
+                } else alert(data.message);
+            } catch(e) {}
+        }
+
+        async function removeVaultTag(tagName) {
+            if(!window.currentVaultFilename) return;
+            try {
+                const res = await fetch('/api/vault/tag/remove', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({filename: window.currentVaultFilename, category: window.currentVaultCategory, tag: tagName})
+                });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    if(currentModalModel.tags) {
+                        currentModalModel.tags = currentModalModel.tags.filter(t => t.name !== tagName && t !== tagName);
+                        renderLightboxTags(currentModalModel.tags);
+                    }
+                } else alert(data.message);
+            } catch(e) {}
             updateLightboxVersion();
         }
 
@@ -1198,17 +2266,35 @@
             if(!mainFile) return;
 
             // Mapping Model Type to Vault Tier
-            const typeMap = {
-                "Checkpoint": "checkpoints",
-                "LORA": "loras",
-                "TextualInversion": "embeddings",
-                "Controlnet": "controlnet",
-                "VAE": "vaes"
-            };
-            const tier = typeMap[m.type] || "other";
+            let tier = "misc";
+            const lowerName = (mainFile.name || "").toLowerCase();
+            const isFlux = (v.baseModel && v.baseModel.includes("Flux"));
+
+            if(isFlux) {
+                // Intelligent routing for FLUX components
+                if(m.type === "LORA" || lowerName.includes("lora")) tier = "loras";
+                else if(m.type === "VAE" || lowerName.includes("vae")) tier = "vaes";
+                else if(lowerName.includes("clip") || lowerName.includes("t5")) tier = "clip";
+                else tier = "unet"; // Default FLUX checks/UNETs to unet folder
+            } else {
+                const typeMap = {
+                    "Checkpoint": "checkpoints",
+                    "LORA": "loras",
+                    "TextualInversion": "embeddings",
+                    "Controlnet": "controlnet",
+                    "VAE": "vaes",
+                    "Upscaler": "upscaler",
+                    "MotionModule": "motion"
+                };
+                tier = typeMap[m.type] || "misc";
+            }
+
             const destFolder = `Global_Vault/${tier}`;
-            
-            const dlUrl = mainFile.downloadUrl + "?type=Model&format=SafeTensor"; 
+            const source = document.getElementById('ex-source').value;
+            let dlUrl = mainFile.downloadUrl;
+            if (source === 'civitai') {
+                dlUrl += "?type=Model&format=SafeTensor";
+            }
             
             closeLightbox();
             
@@ -1220,7 +2306,8 @@
                         url: dlUrl,
                         filename: mainFile.name,
                         model_name: m.name,
-                        dest_folder: destFolder
+                        dest_folder: destFolder,
+                        api_key: localStorage.getItem('civitai_api_key') || ""
                     })
                 });
                 const response = await res.json();
@@ -1277,56 +2364,110 @@
         }
 
         /* --- Local Vault & App Store --- */
-        async function loadModels() {
+        async function loadModels(append = false) {
+            if (window._semanticSearchActive) return; // Prevent pagination interference during search
             try {
-                const res = await fetch('/api/models');
+                if(!append) {
+                    vaultOffset = 0;
+                    document.getElementById('models-grid').innerHTML = '<div class="empty-state">Loading your library...</div>';
+                }
+                
+                const res = await fetch(`/api/models?limit=${vaultLimit}&offset=${vaultOffset}`);
                 const data = await res.json();
                 
-                const grid = document.getElementById('models-grid');
-                grid.innerHTML = '';
+                renderVaultGrid(data.models || [], append, data.total);
                 
-                if(!data.models || data.models.length === 0) {
-                    grid.innerHTML = '<div class="empty-state">No models found in the database. Run the Vault Crawler!</div>';
-                    return;
+                // Also update the tags dropdown
+                if(!append) {
+                    await loadVaultTags();
                 }
-
-                data.models.forEach(m => {
-                    const fallbackImg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 100 100"><rect fill="%231e293b" width="100" height="100"/><text fill="%2394a3b8" x="50" y="50" font-family="sans-serif" font-size="10" text-anchor="middle" dominant-baseline="middle">No Preview</text></svg>`;
-                    const imgSrc = m.thumbnail_path ? '/' + m.thumbnail_path.replace(/\\/g, '/') : fallbackImg;
-                    const displayName = m.metadata?.model?.name || m.filename;
-                    
-                    let clickStr = '';
-                    if(m.metadata && m.metadata.modelId) {
-                        const fakeParent = {
-                            id: m.metadata.modelId,
-                            name: m.metadata.model ? m.metadata.model.name : m.filename,
-                            type: m.metadata.model ? m.metadata.model.type : "Unknown",
-                            creator: { username: "Local Vault" },
-                            tags: [],
-                            modelVersions: [ m.metadata ] // wrap the version to trick the lightbox
-                        };
-                        activeModels[fakeParent.id] = fakeParent;
-                        window.cardState[fakeParent.id] = 0;
-                        clickStr = `onclick="openLightbox(${fakeParent.id}, '${m.filename}', '${m.vault_category}')" style="cursor:pointer;"`;
-                    }
-                    
-                    grid.innerHTML += `
-                        <div class="card" ${clickStr}>
-                            <div class="card-img-container" style="padding-top:100%;">
-                                <img class="card-img" src="${imgSrc}" onerror="this.src='${fallbackImg}'">
-                            </div>
-                            <div class="card-banner" style="position:relative; background:var(--surface);">
-                                <span class="badge" style="background:var(--primary); margin-bottom:5px; display:inline-block;">${m.vault_category}</span>
-                                <h3>${displayName}</h3>
-                                <div class="card-meta-row" style="color:var(--text-muted);">
-                                    <span>${m.filename}</span>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                });
             } catch (e) {
                 console.error(e);
+            }
+        }
+
+        async function loadVaultTags() {
+            try {
+                const res = await fetch('/api/vault/tags');
+                const data = await res.json();
+                const select = document.getElementById('vault-tag-filter');
+                const curVal = select.value;
+                select.innerHTML = '<option value="">All Collections / Tags</option>';
+                if(data.tags) {
+                    data.tags.forEach(tag => {
+                        const opt = document.createElement('option');
+                        opt.value = tag.name;
+                        opt.innerText = tag.name;
+                        select.appendChild(opt);
+                    });
+                }
+                select.value = curVal; // Restore selection if any
+            } catch(e) {}
+        }
+
+        function renderVaultGrid(models, append, total = 0) {
+            const grid = document.getElementById('models-grid');
+            const loadMoreBtn = document.getElementById('vault-load-more-container');
+            
+            if(!append) grid.innerHTML = '';
+            
+            if(!models || models.length === 0) {
+                if(!append) grid.innerHTML = '<div class="empty-state">No models found in the database. Run the Vault Crawler!</div>';
+                loadMoreBtn.style.display = 'none';
+                return;
+            }
+
+            models.forEach(m => {
+                // Determine model object (from standard or search API)
+                const isSearchRes = (m.model !== undefined && m.score !== undefined);
+                const item = isSearchRes ? m.model : m;
+                
+                const fallbackImg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 100 100"><rect fill="%231e293b" width="100" height="100"/><text fill="%2394a3b8" x="50" y="50" font-family="sans-serif" font-size="10" text-anchor="middle" dominant-baseline="middle">No Preview</text></svg>`;
+                const imgSrc = item.thumbnail_path ? '/' + item.thumbnail_path.replace(/\\/g, '/') : fallbackImg;
+                const displayName = item.metadata?.model?.name || item.filename;
+                const isFlux = (item.metadata?.baseModel && item.metadata.baseModel.includes("Flux"));
+                // Compile tags for dataset attribute
+                const tagsList = ((item.tags && item.tags.map(t=>t.name)) || []).join(',');
+                
+                let clickStr = '';
+                if(item.metadata && item.metadata.modelId) {
+                    const fakeParent = {
+                        id: item.metadata.modelId,
+                        name: item.metadata.model ? item.metadata.model.name : item.filename,
+                        type: item.metadata.model ? item.metadata.model.type : "Unknown",
+                        creator: { username: "Local Vault" },
+                        tags: [],
+                        modelVersions: [ item.metadata ]
+                    };
+                    activeModels[fakeParent.id] = fakeParent;
+                    window.cardState[fakeParent.id] = 0;
+                    clickStr = `onclick="openLightbox(${fakeParent.id}, '${item.filename}', '${item.vault_category}')" style="cursor:pointer;"`;
+                }
+                
+                grid.innerHTML += `
+                    <div class="card" data-category="${item.vault_category}" data-tags="${tagsList}" data-name="${displayName.toLowerCase()}" ${clickStr}>
+                        <div class="card-img-container" style="padding-top:100%;">
+                            <img class="card-img" src="${imgSrc}" onerror="this.src='${fallbackImg}'">
+                            <div style="position:absolute; top:10px; right:10px; display:flex; gap:5px; z-index:2; flex-wrap:wrap;">
+                                ${item.update_available === 1 ? '<span class="badge" style="background:#10b981; color:#fff; border:none; font-weight:bold; padding:4px 8px; font-size:0.75rem;">🔄 UPDATE</span>' : ''}
+                                ${isFlux ? '<span class="badge" style="background:#fbbf24; color:#000; border:none; font-weight:bold; padding:4px 8px; font-size:0.75rem;">FLUX</span>' : ''}
+                                <span class="badge" style="background:var(--primary); padding:4px 8px; font-size:0.75rem;">${item.vault_category}</span>
+                            </div>
+                        </div>
+                        <div class="card-banner" style="position:relative; background:var(--surface);">
+                            <h3>${displayName}</h3>
+                            <div class="card-meta-row" style="color:var(--text-muted);">
+                                <span>${item.filename}</span>
+                                ${isSearchRes ? `<span style="color: #4ade80;">Score: ${(m.score * 100).toFixed(0)}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            if(!window._semanticSearchActive) {
+                vaultOffset += models.length;
+                loadMoreBtn.style.display = (vaultOffset < total) ? 'block' : 'none';
             }
         }
 
@@ -1349,11 +2490,14 @@
                     ` : `
                         <button onclick="launchPackage('${p.id}')" style="background: var(--primary); color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">Launch UI</button>
                     `;
+                    
                     grid.innerHTML += `
                         <div class="std-card">
                             <h3 class="card-title">${p.name}</h3>
-                            <div style="margin-top: 15px; display:flex; gap:10px;">
+                            <div style="margin-top: 15px; display:flex; gap:10px; flex-wrap:wrap;">
                                 ${runBtns}
+                                <button onclick="openLogTerminal('${p.id}', '${p.name}')" style="background: var(--surface-hover); color: white; border: 1px solid var(--border); padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">⌨️ Terminal</button>
+                                <button onclick="openExtensions('${p.id}', '${p.name}')" style="background: #8b5cf6; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">Plugins</button>
                                 <button onclick="uninstallPackage('${p.id}')" style="background: #ef4444; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">Uninstall</button>
                             </div>
                         </div>
@@ -1486,6 +2630,199 @@
             }
         }
 
+        /* ═══════════════════════════════════════════════
+           TERMINAL WEB VIEWER
+        ═══════════════════════════════════════════════ */
+        let terminalInterval = null;
+        
+        function openLogTerminal(packageId, packageName) {
+            document.getElementById('terminal-modal').style.display = 'flex';
+            document.getElementById('term-pkg-name').innerText = packageName;
+            const termOut = document.getElementById('term-output');
+            termOut.innerText = "Connecting to log stream...";
+            
+            terminalInterval = setInterval(async () => {
+                try {
+                    const res = await fetch(`/api/logs?package_id=${packageId}`);
+                    const data = await res.json();
+                    
+                    const isScrolledToBottom = termOut.scrollHeight - termOut.clientHeight <= termOut.scrollTop + 50;
+                    termOut.innerText = data.logs || "--- Empty Log ---";
+                    if(isScrolledToBottom) {
+                        termOut.scrollTop = termOut.scrollHeight;
+                    }
+                } catch(e) {}
+            }, 1000);
+        }
+        
+        function closeTerminal() {
+            document.getElementById('terminal-modal').style.display = 'none';
+            if(terminalInterval) clearInterval(terminalInterval);
+        }
+
+        /* ═══════════════════════════════════════════════
+           VAULT HEALTH & UPDATES
+        ═══════════════════════════════════════════════ */
+        async function triggerUpdatesCheck() {
+            try {
+                const res = await fetch('/api/vault/updates', { method: 'POST', body: '{}' });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    alert("Update checker started in the background. It will poll CivitAI for new versions of your models. Check the terminal for progress.");
+                } else alert(data.message);
+            } catch(e) { alert("Failed to start update check."); }
+        }
+
+        async function triggerUnmanagedImport() {
+            try {
+                const payload = {api_key: document.getElementById('set-api-key')?.value || ''};
+                const res = await fetch('/api/vault/import_scan', { method: 'POST', body: JSON.stringify(payload), headers: {'Content-Type': 'application/json'} });
+                const data = await res.json();
+                alert(data.message || "Import scan started.");
+            } catch(e) { alert("Failed to start import scan."); }
+        }
+
+        async function triggerHealthCheck() {
+            try {
+                const res = await fetch('/api/vault/health_check', { method: 'POST', body: '{}' });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    alert("Health Scan Complete:\n" + data.message);
+                } else alert(data.message);
+            } catch(e) { alert("Failed to run health check."); }
+        }
+
+        /* ═══════════════════════════════════════════════
+           SETTINGS PANEL & SYSTEM UPDATE
+        ═══════════════════════════════════════════════ */
+        async function loadSettings() {
+            try {
+                const res = await fetch('/api/settings');
+                const data = await res.json();
+                document.getElementById('set-api-key').value = data.civitai_api_key || "";
+                document.getElementById('set-hf-api-key').value = data.hf_api_key || "";
+                document.getElementById('set-theme').value = data.theme || "dark";
+                document.getElementById('set-updates').value = (data.auto_updates !== false).toString();
+                document.body.setAttribute('data-theme', data.theme || 'dark');
+            } catch(e) {}
+        }
+        
+        async function saveSettings() {
+            const theme = document.getElementById('set-theme').value;
+            const payload = {
+                civitai_api_key: document.getElementById('set-api-key').value,
+                hf_api_key: document.getElementById('set-hf-api-key').value,
+                theme: theme,
+                auto_updates: document.getElementById('set-updates').value === 'true'
+            };
+            try {
+                const res = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    alert("Settings saved successfully.");
+                    document.body.setAttribute('data-theme', theme);
+                } else alert(data.message);
+            } catch(e) { alert("Failed to save settings."); }
+        }
+
+        async function triggerSystemUpdate() {
+            if(!confirm("Attempt to run updater.py? The server backend will gracefully execute the script and you may lose connection temporarily.")) return;
+            try {
+                const res = await fetch('/api/system/update', { method: 'POST', body: '{}' });
+                const data = await res.json();
+                alert(data.message || "Update process spawned.");
+            } catch(e) { alert("Failed to communicate with updater."); }
+        }
+
+        /* ═══════════════════════════════════════════════
+           RECIPE / EXTENSION MANAGEMENT JS
+        ═══════════════════════════════════════════════ */
+        async function submitNewRecipe() {
+            const app_id = document.getElementById('recipe-id').value;
+            const name = document.getElementById('recipe-name').value;
+            if(!app_id || !name) return alert("App ID and Name required.");
+            
+            const payload = {
+                app_id, name,
+                repository: document.getElementById('recipe-repo').value,
+                launch: document.getElementById('recipe-launch').value,
+                pip_packages: (document.getElementById('recipe-pip').value || '').split(',').map(s=>s.trim()).filter(Boolean)
+            };
+            
+            try {
+                const res = await fetch('/api/recipes/build', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    document.getElementById('recipe-modal').style.display = 'none';
+                    loadRecipes();
+                } else alert(data.message);
+            } catch(e) { alert("Error building recipe"); }
+        }
+
+        let currentExtPkg = null;
+        async function openExtensions(pkgId, pkgName) {
+            currentExtPkg = pkgId;
+            document.getElementById('ext-pkg-name').innerText = pkgName;
+            document.getElementById('ext-repo-url').value = '';
+            document.getElementById('ext-list').innerHTML = '<div style="color:var(--text-muted);padding:10px;">Loading extensions...</div>';
+            document.getElementById('extensions-modal').style.display = 'flex';
+            
+            try {
+                const res = await fetch('/api/extensions?package_id=' + pkgId);
+                const data = await res.json();
+                if(data.status === 'success') {
+                    const list = document.getElementById('ext-list');
+                    if(data.extensions.length === 0) list.innerHTML = '<div style="color:var(--text-muted);padding:10px;">No custom nodes/extensions found.</div>';
+                    else {
+                        list.innerHTML = data.extensions.map(e => `
+                            <div style="display:flex; justify-content:space-between; align-items:center; background:var(--surface); padding:10px; border-radius:6px; border:1px solid var(--border);">
+                                <span style="font-size:0.9rem;">${e.name}</span>
+                                <button onclick="removeExtension('${pkgId}', '${e.name}')" style="background:none; border:none; color:#ef4444; cursor:pointer;" title="Remove">🗑</button>
+                            </div>
+                        `).join('');
+                    }
+                }
+            } catch(e) {}
+        }
+
+        async function installExtension() {
+            if(!currentExtPkg) return;
+            const repo = document.getElementById('ext-repo-url').value;
+            if(!repo) return;
+            try {
+                const res = await fetch('/api/extensions/install', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({package_id: currentExtPkg, repo_url: repo})
+                });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    document.getElementById('ext-repo-url').value = '';
+                    document.getElementById('ext-list').innerHTML += `<div style="color:#10b981;padding:10px;">Clone started (check terminal for progress). Auto-refreshing soon...</div>`;
+                    setTimeout(() => openExtensions(currentExtPkg, document.getElementById('ext-pkg-name').innerText), 3000);
+                } else alert(data.message);
+            } catch(e) { alert("Error installing extension"); }
+        }
+
+        async function removeExtension(pkgId, extName) {
+            if(!confirm(`Remove ${extName}?`)) return;
+            try {
+                const res = await fetch('/api/extensions/remove', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({package_id: pkgId, ext_name: extName})
+                });
+                if((await res.json()).status === 'success') {
+                    openExtensions(pkgId, document.getElementById('ext-pkg-name').innerText);
+                }
+            } catch(e) { alert("Error removing extension"); }
+        }
+
         /* --- Inference Studio UI Engine --- */
         async function extractComfyMetadata(blob) {
             const buf = await blob.arrayBuffer();
@@ -1602,6 +2939,14 @@
                 document.getElementById('inf-hires-container').style.display = 'none';
             }
             
+            // Show/hide refiner steps based on whether a refiner is selected
+            const refinerStepsRow = document.getElementById('inf-refiner-steps-row');
+            if(refinerStepsRow) refinerStepsRow.style.display = (cRefiner && cRefiner !== 'none') ? 'flex' : 'none';
+            
+            // Reset canvas zoom
+            const canvasImg2 = document.getElementById('inf-canvas-img');
+            if(canvasImg2) canvasImg2.style.transform = 'scale(1)';
+            
             // Restore LoRAs natively
             const lCont = document.getElementById('inf-lora-container');
             lCont.innerHTML = '';
@@ -1623,12 +2968,13 @@
                 if(!res.ok) throw new Error("Offline");
                 document.getElementById('inf-launch-btn').innerText = "Backend Connected 🟢";
                 document.getElementById('inf-launch-btn').style.color = "#4ade80";
+                window.comfyLaunching = false;
             } catch(e) {
                 document.getElementById('inf-launch-btn').innerText = "Launch Engine";
                 document.getElementById('inf-launch-btn').style.color = "#cbd5e1";
                 
-                // Lazily autostart if clicking Inference
-                if(document.getElementById('inf-launch-btn').innerText !== "Starting...") {
+                // Only autostart once — guard prevents repeated launches on tab switching
+                if(!window.comfyLaunching) {
                     launchComfyUI();
                 }
             }
@@ -1680,35 +3026,389 @@
                 if(lastVal) ddw.value = lastVal;
                 if(lastRef) ref.value = lastRef;
                 if(lastVae) vae.value = lastVae;
+
+                // Also populate FLUX UNET dropdown from /unet category
+                const unetSel = document.getElementById('inf-flux-unet');
+                const prevUnet = unetSel.value;
+                unetSel.innerHTML = '<option value="">Select FLUX UNET...</option>';
+                data.models.filter(m => m.vault_category === 'unet').forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.filename; opt.innerText = m.filename;
+                    unetSel.appendChild(opt);
+                });
+                if(prevUnet) unetSel.value = prevUnet;
+
+                // Populate CLIP-L and T5-XXL from /clip category
+                const clipL = document.getElementById('inf-flux-clip-l');
+                const t5sel = document.getElementById('inf-flux-t5xxl');
+                const prevClipL = clipL.value;
+                const prevT5    = t5sel.value;
+                clipL.innerHTML = '<option value="">Select CLIP-L...</option>';
+                t5sel.innerHTML  = '<option value="">Select T5-XXL...</option>';
+                // Accept files from both 'clip' and 'text_encoders' vault categories
+                const encoderModels = data.models.filter(m => m.vault_category === 'clip' || m.vault_category === 'text_encoders');
+                encoderModels.forEach(m => {
+                    const f = m.filename.toLowerCase();
+                    const label = m.metadata?.model?.name ? `${m.metadata.model.name} (${m.filename})` : m.filename;
+                    // Offer every encoder file in BOTH dropdowns so user has full flexibility
+                    const optC = new Option(label, m.filename);
+                    const optT = new Option(label, m.filename);
+                    clipL.appendChild(optC);
+                    t5sel.appendChild(optT);
+                    // Auto-preselect by common naming conventions
+                    if((f.includes('clip_l') || f.includes('clip-l')) && !f.includes('t5')) clipL.value = m.filename;
+                    if(f.includes('t5') || f.includes('t5xxl') || f.includes('t5-xxl')) t5sel.value = m.filename;
+                });
+                if(prevClipL) clipL.value = prevClipL;
+                if(prevT5)    t5sel.value = prevT5;
             });
         }
 
-        async function launchComfyUI() {
+        /* --- Download Status Management --- */
+        let dlPollInterval = null;
+
+        function toggleDownloadPopup() {
+            const el = document.getElementById('dl-status-modal');
+            const isVisible = el.style.display === 'flex';
+            el.style.display = isVisible ? 'none' : 'flex';
+            if(!isVisible) updateDownloadStatus();
+        }
+
+        async function updateDownloadStatus() {
             try {
+                const res = await fetch('/api/downloads');
+                const data = await res.json();
+                
+                const list = document.getElementById('dl-status-list');
+                const badge = document.getElementById('ex-dl-badge');
+                
+                const entries = Object.entries(data);
+                if(entries.length === 0) {
+                    list.innerHTML = '<div style="color: var(--text-muted); text-align: center; margin-top: 40px;">No downloads in history</div>';
+                    badge.style.display = 'none';
+                    return;
+                }
+
+                let html = '';
+                let activeCount = 0;
+                
+                // Sort entries: active first, then by name
+                entries.sort((a,b) => {
+                    const aActive = (a[1].status === 'starting' || a[1].status === 'downloading');
+                    const bActive = (b[1].status === 'starting' || b[1].status === 'downloading');
+                    if(aActive && !bActive) return -1;
+                    if(!aActive && bActive) return 1;
+                    return (a[1].model_name || "").localeCompare(b[1].model_name || "");
+                });
+
+                entries.forEach(([id, job]) => {
+                    const isActive = (job.status === 'starting' || job.status === 'downloading');
+                    if(isActive) activeCount++;
+                    
+                    let statusColor = '#94a3b8';
+                    if(job.status === 'completed') statusColor = '#4ade80';
+                    if(job.status === 'error') statusColor = '#f87171';
+                    if(isActive) statusColor = '#3b82f6';
+
+                    const retryBtn = job.status === 'error' ? `<button onclick="retryDownload('${id}')" style="background:var(--primary); border:none; color:#fff; padding:2px 8px; border-radius:4px; font-size:0.7rem; cursor:pointer; margin-left:10px; font-weight:bold;">RETRY</button>` : '';
+
+                    html += `
+                        <div class="dl-status-item">
+                            <div class="dl-status-header">
+                                <strong style="color: #fff;">${job.model_name || 'Unknown Model'}</strong>
+                                <span style="color: ${statusColor}; font-size: 0.8rem; font-weight: 600;">${(job.status || 'unknown').toUpperCase()}${retryBtn}</span>
+                            </div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">${job.filename || ''}</div>
+                            ${isActive ? `
+                                <div class="dl-status-progress">
+                                    <div class="dl-status-bar" style="width: ${job.progress || 0}%"></div>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-muted);">
+                                    <span>${job.progress || 0}%</span>
+                                    <span>${((job.downloaded || 0) / (1024*1024)).toFixed(1)} / ${((job.total || 0) / (1024*1024)).toFixed(1)} MB</span>
+                                </div>
+                            ` : ''}
+                            ${job.status === 'error' ? `<div style="color: #f87171; font-size: 0.75rem; margin-top: 4px;">${job.message || 'Unknown error'}</div>` : ''}
+                        </div>
+                    `;
+                });
+
+                list.innerHTML = html;
+                
+                if(activeCount > 0) {
+                    badge.innerText = activeCount;
+                    badge.style.display = 'block';
+                    if(!dlPollInterval) dlPollInterval = setInterval(updateDownloadStatus, 2000);
+                } else {
+                    badge.style.display = 'none';
+                    if(dlPollInterval) {
+                        clearInterval(dlPollInterval);
+                        dlPollInterval = null;
+                        // Final update to show completion if any were active
+                        updateDownloadStatus();
+                    }
+                }
+            } catch(e) {
+                console.error("Failed to poll downloads", e);
+            }
+        }
+
+        async function clearDownloadHistory() {
+            if(!confirm("Are you sure you want to clear your download history?")) return;
+            try {
+                const res = await fetch('/api/downloads/clear', { method: 'POST' });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    updateDownloadStatus();
+                } else {
+                    alert("Failed to clear: " + data.message);
+                }
+            } catch(e) {
+                alert("Request failed");
+            }
+        }
+
+        function toggleSettings() {
+            const modal = document.getElementById('settings-modal');
+            modal.style.display = modal.style.display === 'none' ? 'flex' : 'none';
+            if(modal.style.display === 'flex') {
+                document.getElementById('settings-api-key').value = localStorage.getItem('civitai_api_key') || '';
+            }
+        }
+
+        function saveSettings() {
+            const key = document.getElementById('settings-api-key').value;
+            localStorage.setItem('civitai_api_key', key);
+            toggleSettings();
+            loadExplorer(); // Refresh explorer if key changed
+        }
+
+        async function retryDownload(jobId) {
+            try {
+                const res = await fetch('/api/download/retry', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        job_id: jobId,
+                        api_key: localStorage.getItem('civitai_api_key') || ""
+                    })
+                });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    // Update UI quickly
+                    updateDownloadStatus();
+                } else {
+                    alert("Retry failed: " + data.message);
+                }
+            } catch(e) { alert("Retry request failed"); }
+        }
+
+        // Initial poll on load
+        setTimeout(updateDownloadStatus, 1000);
+
+        async function launchActiveEngine() {
+            if(window.engineLaunching) return; // Prevent duplicate launches
+            window.engineLaunching = true;
+            try {
+                const engine = document.getElementById('inf-engine')?.value || 'comfyui';
+                const appId = engine === 'a1111' ? 'forge' : engine; // launch forge for a1111
+                
                 const btn = document.getElementById('inf-launch-btn');
                 btn.innerText = "Starting...";
                 btn.style.color = "#fbbf24";
+                
                 await fetch('/api/launch', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({package_id: 'ComfyUI'})
+                    body: JSON.stringify({package_id: appId}) // Package Manager expects package_id
                 });
+                
                 let retries = 0;
                 const poll = setInterval(async () => {
                     try {
+                        if(engine !== 'comfyui') {
+                            retries++;
+                            if(retries > 5) {
+                                clearInterval(poll);
+                                btn.innerText = "Engine Active";
+                                btn.style.color = "#4ade80";
+                                window.engineLaunching = false;
+                            }
+                            return;
+                        }
+                        
                         const res = await fetch('/api/comfy_proxy', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({endpoint: '/system_stats'}) });
                         if(res.ok) {
                             clearInterval(poll);
+                            btn.innerText = "Engine Active";
+                            btn.style.color = "#4ade80";
+                            window.engineLaunching = false;
                             initInferenceUI();
                         }
                     } catch(e) {
                         retries++;
-                        if(retries > 30) clearInterval(poll); // give up after 30s
+                        if(retries > 30) {
+                            clearInterval(poll);
+                            btn.innerText = "Launch Timeout";
+                            btn.style.color = "#ef4444";
+                            window.engineLaunching = false;
+                        }
                     }
                 }, 1000);
-            } catch(e) { alert("Failed to launch ComfyUI"); }
+            } catch(e) { 
+                alert("Failed to launch Engine");
+                window.engineLaunching = false; 
+            }
         }
 
+        async function executeA1111Inference() {
+            const btn = document.getElementById('inf-generate-btn');
+            const txt = document.getElementById('inf-generate-text');
+            const fill = document.getElementById('inf-progress-fill');
+            
+            const rawSampler = document.getElementById('inf-sampler').value;
+            let samplerMap = {
+                'euler_ancestral': 'Euler a', 'euler': 'Euler',
+                'dpmpp_2m': 'DPM++ 2M', 'dpmpp_2m_sde': 'DPM++ 2M SDE',
+                'dpmpp_sde': 'DPM++ SDE', 'karras': 'Euler a'
+            };
+            const mappedSampler = samplerMap[rawSampler] || 'Euler a';
+
+            let finalPrompt = document.getElementById('inf-prompt').value;
+            
+            // 1. Parse LoRAs
+            const loraRows = document.querySelectorAll('#inf-lora-container > div');
+            loraRows.forEach(row => {
+               const lName = row.querySelector('.lora-select').value;
+               const lWeight = parseFloat(row.querySelector('.lora-weight').value);
+               if(lName && lName !== 'none') {
+                   finalPrompt += ` <lora:${lName}:${lWeight}>`;
+               }
+            });
+
+            const payload = {
+                prompt: finalPrompt,
+                negative_prompt: document.getElementById('inf-negative').value,
+                steps: parseInt(document.getElementById('inf-steps').value),
+                cfg_scale: parseFloat(document.getElementById('inf-cfg').value),
+                width: parseInt(document.getElementById('inf-width').value),
+                height: parseInt(document.getElementById('inf-height').value),
+                seed: parseInt(document.getElementById('inf-seed').value),
+                sampler_name: mappedSampler,
+                override_settings: {
+                    "sd_model_checkpoint": document.getElementById('inf-model').value
+                }
+            };
+            
+            // 2. Img2Img detection
+            let isImg2Img = false;
+            let targetEndpoint = "/sdapi/v1/txt2img";
+            
+            if(window.comfyUploadedImg2Img) {
+                isImg2Img = true;
+                targetEndpoint = "/sdapi/v1/img2img";
+                // A1111 expects base64 strings in init_images array
+                payload.init_images = [window.comfyUploadedImg2Img];
+                payload.denoising_strength = parseFloat(document.getElementById('inf-img2img-denoise').value);
+            }
+            
+            // 3. ControlNet detection
+            const cnEnable = document.getElementById('inf-cn-enable')?.checked;
+            if(cnEnable && window.comfyUploadedCn) {
+                const cnModel = document.getElementById('inf-cn-model').value;
+                const cnStrength = parseFloat(document.getElementById('inf-cn-strength').value);
+                
+                payload.alwayson_scripts = payload.alwayson_scripts || {};
+                payload.alwayson_scripts.controlnet = {
+                    "args": [
+                        {
+                            "input_image": window.comfyUploadedCn,
+                            "module": "none",
+                            "model": cnModel,
+                            "weight": cnStrength,
+                            "resize_mode": 1
+                        }
+                    ]
+                };
+            }
+            
+            // High-Res Fix (Only apply if NOT in Img2Img mode)
+            if(!isImg2Img && document.getElementById('inf-hires-enable')?.checked) {
+                payload.enable_hr = true;
+                payload.hr_scale = parseFloat(document.getElementById('inf-hires-factor').value);
+                const upscaler = document.getElementById('inf-hires-upscaler').value;
+                payload.hr_upscaler = upscaler.includes('latent') ? 'Latent' : upscaler;
+                payload.hr_second_pass_steps = parseInt(document.getElementById('inf-hires-steps').value);
+                payload.denoising_strength = parseFloat(document.getElementById('inf-hires-denoise').value);
+            }
+
+            btn.disabled = true;
+            txt.innerText = "Generating (A1111)...";
+            fill.style.width = '50%';
+
+            try {
+                const res = await fetch('/api/a1111_proxy', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ endpoint: targetEndpoint, payload: payload })
+                });
+                const data = await res.json();
+                if(data.error) throw new Error(data.error);
+                
+                if(data.images && data.images.length > 0) {
+                    const b64 = "data:image/png;base64," + data.images[0];
+                    const canvasImg = document.getElementById('inf-canvas-img');
+                    canvasImg.src = b64;
+                    canvasImg.style.display = 'block';
+                    document.getElementById('inf-canvas-empty').style.display = 'none';
+                    
+                    addToGallery(b64, payload);
+                }
+            } catch(e) {
+                alert("A1111 Generation Failed: " + e.message);
+            } finally {
+                btn.disabled = false;
+                txt.innerText = "Generate Image";
+                fill.style.width = '0%';
+            }
+        }
+
+        async function executeFooocusInference() {
+            // Simplified Fooocus API mock (similar to A1111)
+            const btn = document.getElementById('inf-generate-btn');
+            const txt = document.getElementById('inf-generate-text');
+            const payload = {
+                prompt: document.getElementById('inf-prompt').value,
+                negative_prompt: document.getElementById('inf-negative').value,
+                style_selections: ["Fooocus V2", "Fooocus Enhance", "Fooocus Sharp"],
+                performance_selection: "Quality"
+            };
+            btn.disabled = true;
+            txt.innerText = "Generating (Fooocus)...";
+            try {
+                const res = await fetch('/api/fooocus_proxy', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ payload })
+                });
+                const data = await res.json();
+                if(data.image) {
+                    const canvasImg = document.getElementById('inf-canvas-img');
+                    canvasImg.src = data.image.url || "data:image/png;base64," + data.image.base64;
+                    canvasImg.style.display = 'block';
+                    document.getElementById('inf-canvas-empty').style.display = 'none';
+                    addToGallery(canvasImg.src, payload);
+                }
+            } catch(e) { alert("Fooocus Failed: " + e.message); }
+            btn.disabled = false;
+            txt.innerText = "Generate Image";
+        }
         async function executeInference() {
+            const engine = document.getElementById('inf-engine').value;
+            if(engine === 'a1111') return executeA1111Inference();
+            if(engine === 'fooocus') return executeFooocusInference();
+
+            const _mt=document.getElementById('inf-model-type').value;
+            if(_mt==='flux-dev'||_mt==='flux-schnell') return executeFluxInference();
             const ckpt_name = document.getElementById('inf-model').value;
             const refiner_name = document.getElementById('inf-refiner').value;
             const vae_name = document.getElementById('inf-vae').value;
@@ -1817,12 +3517,14 @@
                 const hDenoise = parseFloat(document.getElementById('inf-hires-denoise').value);
                 const hSteps = parseInt(document.getElementById('inf-hires-steps').value);
                 const hUpscaler = document.getElementById('inf-hires-upscaler').value;
+                const upParams = getHiresUpscalerParams(hUpscaler);
                 let upscaledLatentSource;
                 
-                if(hUpscaler === 'latent') {
-                    workflow["300"] = { "inputs": { "upscale_method": "bilinear", "scale_by": hFactor, "samples": finalLatentSource }, "class_type": "LatentUpscaleBy" };
+                if(upParams.type === 'latent') {
+                    workflow["300"] = { "inputs": { "upscale_method": upParams.method, "scale_by": hFactor, "samples": finalLatentSource }, "class_type": "LatentUpscaleBy" };
                     upscaledLatentSource = [ "300", 0 ];
                 } else {
+                    // ESRGAN/SwinIR: decode → upscale image → re-encode
                     workflow["301"] = { "inputs": { "samples": finalLatentSource, "vae": currentVaeSource }, "class_type": "VAEDecode" };
                     workflow["302"] = { "inputs": { "upscale_method": "bicubic", "scale_by": hFactor, "image": [ "301", 0 ] }, "class_type": "ImageScaleBy" };
                     workflow["303"] = { "inputs": { "pixels": [ "302", 0 ], "vae": currentVaeSource }, "class_type": "VAEEncode" };
@@ -1891,15 +3593,7 @@
                                     canvasImg.style.display = 'block';
                                     document.getElementById('inf-canvas-empty').style.display = 'none';
                                     
-                                    const gal = document.getElementById('inf-gallery');
-                                    const thumb = document.createElement('img');
-                                    thumb.src = imgUrl;
-                                    thumb.style.height = '100px';
-                                    thumb.style.borderRadius = '6px';
-                                    thumb.style.cursor = 'pointer';
-                                    thumb.style.border = '1px solid var(--border)';
-                                    thumb.onclick = () => canvasImg.src = imgUrl;
-                                    gal.insertBefore(thumb, gal.firstChild);
+                                    addToGallery(imgUrl, workflow);
                                     
                                     document.getElementById('inf-generate-btn').disabled = false;
                                     document.getElementById('inf-generate-text').innerText = "Generate Image";
@@ -1961,11 +3655,113 @@
             } catch(e) { }
         }
         
+        async function checkSystemStatus() {
+            try {
+                const res = await fetch('/api/server_status');
+                const data = await res.json();
+                const toast = document.getElementById('global-sync-toast');
+                if(data.is_syncing) {
+                    toast.style.display = 'flex';
+                    let msgs = [];
+                    if(data.unpopulated_models > 0) msgs.push(`Indexing ${data.unpopulated_models} Models`);
+                    if(data.active_downloads > 0) msgs.push(`${data.active_downloads} Downloads Active`);
+                    toast.innerText = `✨ ${msgs.join(" | ")}...`;
+                } else {
+                    toast.style.display = 'none';
+                }
+            } catch(e) {}
+        }
+        setInterval(checkSystemStatus, 3000);
         setInterval(pollDownloads, 1000); // 1-second background poll
         
         // Init
         loadExplorer();
+        loadSettings();
 
     </script>
+    <div id="global-sync-toast" style="display:none; position:fixed; bottom:20px; right:20px; background:var(--primary); color:white; padding:12px 24px; border-radius:8px; z-index:9000; box-shadow:0 10px 30px rgba(0,0,0,0.5); align-items:center; font-weight:600; font-size:0.9rem; transition: opacity 0.3s;"></div>
+    <div id="dl-status-modal" class="lightbox-overlay" style="z-index: 200;" onclick="if(event.target===this) toggleDownloadPopup()">
+        <div class="lightbox-content" style="max-width: 600px; flex-direction: column; height: auto; max-height: 80vh;">
+            <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+                <h2 style="margin: 0; font-size: 1.2rem;">Downloads</h2>
+                <div style="display: flex; gap: 10px;">
+                    <button onclick="clearDownloadHistory()" style="background: var(--surface-hover); border: 1px solid var(--border); color: var(--text-muted); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">Clear All</button>
+                    <button onclick="toggleDownloadPopup()" style="background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer;">&times;</button>
+                </div>
+            </div>
+            <div id="dl-status-list" style="padding: 20px; overflow-y: auto; flex: 1; min-height: 200px;">
+                <!-- items go here -->
+                <div style="color: var(--text-muted); text-align: center; margin-top: 40px;">No downloads in history</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recipe Builder Modal -->
+    <div id="recipe-modal" class="lightbox-overlay" style="display:none; align-items:center; justify-content:center; z-index:500;" onclick="if(event.target===this)this.style.display='none'">
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:500px; padding:30px; box-shadow:0 10px 30px rgba(0,0,0,0.5);">
+            <h2 style="margin:0 0 10px;">Create Recipe</h2>
+            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:20px;">Declare a new UI to be auto-built via the orchestrator.</p>
+            
+            <div style="display:flex; flex-direction:column; gap:15px; margin-bottom:25px;">
+                <div>
+                    <label class="section-title">App ID (folder name)</label>
+                    <input type="text" id="recipe-id" class="select-fancy" style="width:100%;" placeholder="e.g. comfyui">
+                </div>
+                <div>
+                    <label class="section-title">Display Name</label>
+                    <input type="text" id="recipe-name" class="select-fancy" style="width:100%;" placeholder="e.g. ComfyUI">
+                </div>
+                <div>
+                    <label class="section-title">Git Repository URL</label>
+                    <input type="text" id="recipe-repo" class="select-fancy" style="width:100%;" placeholder="https://github.com/...">
+                </div>
+                <div>
+                    <label class="section-title">Launch Script</label>
+                    <input type="text" id="recipe-launch" class="select-fancy" style="width:100%;" placeholder="e.g. python main.py">
+                </div>
+                <div>
+                    <label class="section-title">Extra PIP Packages (comma-separated)</label>
+                    <input type="text" id="recipe-pip" class="select-fancy" style="width:100%;" placeholder="e.g. xformers, onnxruntime">
+                </div>
+            </div>
+            
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button onclick="document.getElementById('recipe-modal').style.display='none'" style="background:none; border:none; color:var(--text-muted); cursor:pointer;">Cancel</button>
+                <button onclick="submitNewRecipe()" style="background:var(--primary); color:#fff; border:none; padding:10px 20px; border-radius:8px; font-weight:600; cursor:pointer;">Save Recipe</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Extensions Manager Modal -->
+    <div id="extensions-modal" class="lightbox-overlay" style="display:none; align-items:center; justify-content:center; z-index:500;" onclick="if(event.target===this)this.style.display='none'">
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:600px; max-height:80vh; padding:30px; box-shadow:0 10px 30px rgba(0,0,0,0.5); display:flex; flex-direction:column;">
+            <h2 style="margin:0 0 10px;">Manage Extensions</h2>
+            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:20px;">Install custom nodes/extensions for <span id="ext-pkg-name" style="color:var(--primary);font-weight:bold;"></span>.</p>
+            
+            <div style="display:flex; gap:10px; margin-bottom:20px;">
+                <input type="text" id="ext-repo-url" class="select-fancy" placeholder="https://github.com/..." style="flex:1;">
+                <button onclick="installExtension()" style="background:var(--primary); color:#fff; border:none; padding:10px 20px; border-radius:8px; font-weight:600; cursor:pointer;">Clone Repo</button>
+            </div>
+            
+            <div id="ext-list" style="flex:1; overflow-y:auto; border:1px solid var(--border); border-radius:8px; background:var(--bg-color); padding:10px; display:flex; flex-direction:column; gap:8px;">
+                <!-- Extensions populated here -->
+            </div>
+            
+            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+                <button onclick="document.getElementById('extensions-modal').style.display='none'" style="background:var(--surface-hover); border:none; color:white; padding:10px 20px; border-radius:8px; cursor:pointer;">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Log Viewer Terminal Modal -->
+    <div id="terminal-modal" class="lightbox-overlay" style="display:none; align-items:center; justify-content:center; z-index:500;" onclick="if(event.target===this) closeTerminal()">
+        <div style="background:#020617; border:1px solid #334155; border-radius:12px; width:800px; height:600px; padding:20px; box-shadow:0 10px 40px rgba(0,0,0,0.8); display:flex; flex-direction:column;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #334155; padding-bottom:10px;">
+                <h2 style="margin:0; font-family:monospace; color:#10b981;">> <span id="term-pkg-name">App</span> / runtime.log</h2>
+                <button onclick="closeTerminal()" style="background:none; border:none; color:#f8fafc; font-size:1.5rem; cursor:pointer;">&times;</button>
+            </div>
+            <pre id="term-output" style="flex:1; overflow-y:auto; color:#f8fafc; font-family:monospace; font-size:0.85rem; padding:10px; margin:0; white-space:pre-wrap; background:transparent; border:none; outline:none; scroll-behavior: smooth;"></pre>
+        </div>
+    </div>
 </body>
 </html>

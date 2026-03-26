@@ -10,7 +10,10 @@
     "checkpoints": "models/checkpoints",
     "loras": "models/loras",
     "vaes": "models/vae",
-    "controlnet": "models/controlnet"
+    "controlnet": "models/controlnet",
+    "unet": "models/unet",
+    "clip": "models/clip",
+    "embeddings": "models/embeddings"
   },
   "launch_command": "main.py"
 }

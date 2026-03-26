@@ -34,4 +34,4 @@ dist/
 # Large local/runtime dependencies
 bin/
 Global_Vault/
-packages/comfyui/env/
+packages/

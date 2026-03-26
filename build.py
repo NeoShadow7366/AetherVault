@@ -41,7 +41,11 @@ def create_release_build(root_dir: str):
             "Global_Vault/checkpoints/",
             "Global_Vault/loras/",
             "Global_Vault/vaes/",
-            "Global_Vault/controlnet/"
+            "Global_Vault/controlnet/",
+            "Global_Vault/unet/",
+            "Global_Vault/clip/",
+            "Global_Vault/upscaler/",
+            "Global_Vault/motion/",
         ]
         
         for folder in vault_folders:
