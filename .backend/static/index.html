@@ -3855,7 +3855,7 @@
                 document.getElementById('set-api-key').value = data.civitai_api_key || '';
                 document.getElementById('set-hf-api-key').value = data.hf_api_key || '';
                 const themeEl = document.getElementById('set-theme');
-                if(themeEl && data.theme) themeEl.value = data.theme;
+                if(themeEl && data.theme) { themeEl.value = data.theme; document.body.setAttribute('data-theme', data.theme); }
                 const updEl = document.getElementById('set-updates');
                 if(updEl && data.auto_updates !== undefined) updEl.value = String(data.auto_updates);
                 // Sprint 7: LAN toggle
@@ -3886,6 +3886,8 @@
                 if(data.status === 'success') {
                     localStorage.setItem('civitai_api_key', payload.civitai_api_key);
                     localStorage.setItem('hf_api_key', payload.hf_api_key);
+                    // Apply theme to DOM immediately
+                    if(payload.theme) document.body.setAttribute('data-theme', payload.theme);
                     showSettingsToast('✅ Settings saved successfully.' + (payload.lan_sharing ? ' LAN changes apply on restart.' : ''));
                 } else {
                     showSettingsToast('❌ Failed to save: ' + (data.message || 'Unknown error'));

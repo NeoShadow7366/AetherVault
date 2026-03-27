@@ -18,8 +18,9 @@ def test_tab_navigation_ui(page: Page):
     expect(explorer_view).to_be_visible()
     expect(vault_view).to_be_hidden()
     
-    # Click Global Vault in sidebar
-    page.get_by_text("Global Vault").click()
+    # Click Global Vault in sidebar — use exact=True to avoid matching
+    # "Symlink Global Vault Folders" label and export description
+    page.get_by_text("Global Vault", exact=True).click()
     
     # The active view should toggle via main.js
     expect(explorer_view).to_be_hidden()
@@ -30,8 +31,11 @@ def test_theme_switch(page: Page):
     """Asserts that picking a new dropdown theme applies the CSS [data-theme] securely."""
     page.goto("/")
     
-    # Navigate to Settings
-    page.get_by_text("⚙️ Settings").click()
+    # Navigate to Settings tab (unified settings panel, no longer a modal)
+    page.locator(".nav-item", has_text="Settings").click()
+    
+    # Wait for the settings view to be visible
+    page.locator("#view-settings").wait_for(state="visible")
     
     # Open dropdown, select Light Mode
     page.locator("#set-theme").select_option(value="light", force=True)
@@ -48,16 +52,19 @@ def test_theme_switch(page: Page):
     expect(page.locator("body")).to_have_attribute("data-theme", "dark")
 
 def test_api_key_modal(page: Page):
-    """Verifies modal interaction and JavaScript functionality."""
+    """Verifies the CivitAI Settings button navigates to the unified Settings tab."""
     page.goto("/")
     
-    # Open the API Key popup modal via toolbar button
+    # The CivitAI Settings toolbar button now calls toggleSettings()
+    # which navigates to the unified Settings tab (no longer opens a modal)
     settings_btn = page.locator("button[title='CivitAI Settings']")
     settings_btn.click()
     
-    modal = page.locator("#settings-modal")
-    expect(modal).to_be_visible()
+    # Verify we're now on the Settings tab
+    settings_view = page.locator("#view-settings")
+    expect(settings_view).to_be_visible()
+    expect(page.locator("h1#page-title")).to_have_text("Settings")
     
-    # Ensure it closes natively via Cancel button securely mapping to the correct modal
-    modal.get_by_text("Cancel").click()
-    expect(modal).to_be_hidden()
+    # Verify the API key input is present and editable
+    api_input = page.locator("#set-api-key")
+    expect(api_input).to_be_visible()
