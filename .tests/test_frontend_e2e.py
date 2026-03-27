@@ -34,13 +34,13 @@ def test_theme_switch(page: Page):
     page.get_by_text("⚙️ Settings").click()
     
     # Open dropdown, select Light Mode
-    page.locator("#set-theme").select_option("light")
+    page.locator("#set-theme").select_option(value="light", force=True)
     
     # Check that document root updated its attribute
     expect(page.locator("html")).to_have_attribute("data-theme", "light")
     
     # Switch back to dark to ensure toggle works
-    page.locator("#set-theme").select_option("dark")
+    page.locator("#set-theme").select_option(value="dark", force=True)
     expect(page.locator("html")).to_have_attribute("data-theme", "dark")
 
 def test_api_key_modal(page: Page):
@@ -54,6 +54,6 @@ def test_api_key_modal(page: Page):
     modal = page.locator("#settings-modal")
     expect(modal).to_be_visible()
     
-    # Ensure it closes natively via Cancel button
-    page.get_by_text("Cancel").click()
+    # Ensure it closes natively via Cancel button securely mapping to the correct modal
+    modal.get_by_text("Cancel").click()
     expect(modal).to_be_hidden()
