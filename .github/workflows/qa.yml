@@ -25,6 +25,7 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip' # Automated caching saves network bandwidth per execution
+        cache-dependency-path: 'requirements-qa.txt'
 
     - name: Install Pure QA Dependencies
       run: |
