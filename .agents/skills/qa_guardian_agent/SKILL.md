@@ -15,7 +15,7 @@ You should be invoked manually via the workflows, or whenever a user asks you to
 ## Execution Path
 1. You MUST execute the full local test suite on the codebase. You can do this by running:
    ```powershell
-   python -m pytest .tests/
+   python -m pytest .tests/ --tracing retain-on-failure --video retain-on-failure --screenshot only-on-failure
    ```
 2. If `pytest` is missing, run it via the stdlib runner instead:
    ```powershell

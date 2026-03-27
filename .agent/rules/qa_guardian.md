@@ -17,3 +17,12 @@ Always bind test `ThreadingHTTPServer` instances to `localhost:0`. The OS will a
 - Do not assert on exact output logs, as Threading outputs are asynchronous.
 - A test is considered "flaky" if it fails 1 out of 5 runs. If discovered, you must rewrite the test rather than muting it.
 - `index.html` UI smoke tests should test for fundamental containers (`view-explorer`, `view-vault`, `view-inference`) and API JSON payloads instead of highly sensitive style attributes.
+
+## 5. End-to-End Playwright Stability
+- **Do NOT rely on visual `get_by_text().click()`** for multi-layered DOM modals or components affected by CSS transitions/overlays, as headless Chromium often throws visibility timeouts or strict-mode duplication errors.
+- **Use `page.evaluate("javascript")`** to securely mathematically execute the exact native function (e.g., `saveSettings()`) or DOM changes when native clicks become flaky.
+- Whenever searching for specific texts in modals, strictly tightly-scope the locators (e.g. `modal.get_by_text()`) to avoid matching hidden elements across the monolithic `index.html`.
+
+## 6. GitHub Actions CI Traceability
+- **Pip Cache Alignment:** Since the repository explicitly omits a runtime `requirements.txt` file per the zero-dependency philosophy, all GitHub Actions using `actions/setup-python` pip caching MUST manually pass `cache-dependency-path: 'requirements-qa.txt'`.
+- **Forensic Video Retention:** All automated CI `pytest` commands targeting the UI natively must append `--tracing retain-on-failure --video retain-on-failure --screenshot only-on-failure`. If an E2E test fails dynamically in the cloud, an `actions/upload-artifact` step MUST collect the `test-results/` directory so developers can physically watch the Chromium failure video.
