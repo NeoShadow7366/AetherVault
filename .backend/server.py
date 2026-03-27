@@ -58,12 +58,16 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.handle_hf_search()
         elif path == "/api/extensions":
             self.handle_get_extensions()
+        elif path == "/api/extensions/status":
+            self.handle_extension_status()
         elif path == "/api/settings":
             self.handle_get_settings()
         elif path == "/api/server_status":
             self.handle_server_status()
         elif path == "/api/logs":
             self.handle_get_logs()
+        elif path == "/api/prompts":
+            self.handle_list_prompts()
         else:
             self.serve_static_files(path)
 
@@ -121,12 +125,22 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.handle_install_extension(data)
         elif path == "/api/extensions/remove":
             self.handle_remove_extension(data)
+        elif path == "/api/extensions/cancel":
+            self.handle_cancel_extension(data)
+        elif path == "/api/vault/export":
+            self.handle_vault_export(data)
         elif path == "/api/vault/updates":
             self.handle_vault_updates(data)
         elif path == "/api/vault/health_check":
             self.handle_vault_health_check(data)
         elif path == "/api/vault/import_scan":
             self.handle_import_scan(data)
+        elif path == "/api/vault/bulk_delete":
+            self.handle_vault_bulk_delete(data)
+        elif path == "/api/prompts/save":
+            self.handle_save_prompt(data)
+        elif path == "/api/prompts/delete":
+            self.handle_delete_prompt(data)
         elif path == "/api/settings":
             self.handle_save_settings(data)
         elif path == "/api/system/update":
@@ -282,6 +296,9 @@ class AIWebServer(BaseHTTPRequestHandler):
         repository = data.get("repository")
         launch = data.get("launch")
         pip_packages = data.get("pip_packages", [])
+        symlink_targets = data.get("symlink_targets", [])
+        platform_flags = data.get("platform_flags", "")
+        requirements_file = data.get("requirements_file", "requirements.txt")
 
         if not app_id or not name:
             self.send_json_response({"status": "error", "message": "Missing app_id or name"}, 400)
@@ -295,14 +312,17 @@ class AIWebServer(BaseHTTPRequestHandler):
             "name": name,
             "repository": repository,
             "launch": launch,
-            "pip_packages": pip_packages
+            "pip_packages": pip_packages,
+            "symlink_targets": symlink_targets,
+            "platform_flags": platform_flags,
+            "requirements_file": requirements_file
         }
 
         try:
             os.makedirs(os.path.dirname(recipe_path), exist_ok=True)
             with open(recipe_path, 'w', encoding='utf-8') as f:
                 json.dump(recipe, f, indent=4)
-            self.send_json_response({"status": "success", "message": f"Recipe {recipe_id} created successfully."})
+            self.send_json_response({"status": "success", "recipe_id": recipe_id, "message": f"Recipe {recipe_id} created successfully."})
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
@@ -481,11 +501,61 @@ class AIWebServer(BaseHTTPRequestHandler):
         target_dir = os.path.join(self.root_dir, "packages", package_id, "custom_nodes")
         os.makedirs(target_dir, exist_ok=True)
         
-        # Clone repo
+        import uuid
+        import threading
+        job_id = str(uuid.uuid4())[:8]
+        
         try:
-            logging.info(f"Cloning {repo_url} into {target_dir}")
-            subprocess.Popen(["git", "clone", repo_url], cwd=target_dir)
-            self.send_json_response({"status": "success", "message": "Extension installation started."})
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from installer_engine import ExtensionCloneTracker
+            tracker = ExtensionCloneTracker(self.root_dir)
+            
+            logging.info(f"Starting tracked clone of {repo_url} (job: {job_id})")
+            t = threading.Thread(
+                target=tracker.clone_with_progress,
+                args=(repo_url, target_dir, job_id),
+                daemon=True
+            )
+            t.start()
+            self.send_json_response({"status": "success", "job_id": job_id, "message": "Extension clone started with progress tracking."})
+        except Exception as e:
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
+
+    def handle_extension_status(self):
+        """GET /api/extensions/status?job_id=X — poll real-time clone progress."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        job_id = qs.get("job_id", [""])[0]
+        if not job_id:
+            self.send_json_response({"status": "error", "message": "Missing job_id"}, 400)
+            return
+        try:
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from installer_engine import ExtensionCloneTracker
+            tracker = ExtensionCloneTracker(self.root_dir)
+            job = tracker.get_job_status(job_id)
+            if not job:
+                self.send_json_response({"status": "error", "message": "Job not found"}, 404)
+            else:
+                self.send_json_response(job)
+        except Exception as e:
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
+
+    def handle_cancel_extension(self, data):
+        """POST /api/extensions/cancel — kill a running extension clone."""
+        job_id = data.get("job_id")
+        if not job_id:
+            self.send_json_response({"status": "error", "message": "Missing job_id"}, 400)
+            return
+        try:
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from installer_engine import ExtensionCloneTracker
+            tracker = ExtensionCloneTracker(self.root_dir)
+            success = tracker.cancel_job(job_id)
+            if success:
+                self.send_json_response({"status": "success", "message": "Clone cancelled."})
+            else:
+                self.send_json_response({"status": "error", "message": "Could not cancel (no PID or already finished)."}, 400)
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
@@ -557,8 +627,17 @@ class AIWebServer(BaseHTTPRequestHandler):
     def handle_save_settings(self, data):
         settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
         try:
-            with open(settings_path, 'w') as f:
-                json.dump(data, f, indent=4)
+            # Merge with existing settings to avoid data loss from partial saves
+            existing = {}
+            if os.path.exists(settings_path):
+                try:
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        existing = json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    existing = {}
+            existing.update(data)
+            with open(settings_path, 'w', encoding='utf-8') as f:
+                json.dump(existing, f, indent=4)
             self.send_json_response({"status": "success"})
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
@@ -1163,6 +1242,64 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
+    def handle_vault_export(self, data):
+        """POST /api/vault/export — export models as metadata JSON or streaming zip."""
+        filenames = data.get("filenames", [])
+        include_files = data.get("include_files", False)
+
+        if not filenames:
+            self.send_json_response({"status": "error", "message": "No filenames specified"}, 400)
+            return
+
+        try:
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from metadata_db import MetadataDB
+            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+            manifest = db.export_models_metadata(filenames)
+
+            if not include_files:
+                # Metadata-only export — return JSON
+                self.send_json_response({
+                    "status": "success",
+                    "manifest": manifest,
+                    "export_type": "metadata_only"
+                })
+                return
+
+            # Streaming zip export with model files + manifest
+            import zipfile
+            import io
+            import time as _time
+
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                # Write metadata manifest
+                zf.writestr('vault_manifest.json', json.dumps(manifest, indent=2, default=str))
+
+                # Write model files
+                for entry in manifest:
+                    fn = entry.get('filename', '')
+                    cat = entry.get('vault_category', '')
+                    filepath = os.path.join(self.root_dir, 'Global_Vault', cat, fn)
+                    if os.path.exists(filepath):
+                        arcname = f"{cat}/{fn}"
+                        zf.write(filepath, arcname)
+
+            zip_bytes = buf.getvalue()
+            ts = _time.strftime('%Y%m%d_%H%M%S')
+            filename = f"vault_export_{ts}.zip"
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/zip')
+            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+            self.send_header('Content-Length', str(len(zip_bytes)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(zip_bytes)
+
+        except Exception as e:
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
+
     def handle_server_status(self):
         try:
             sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
@@ -1170,6 +1307,9 @@ class AIWebServer(BaseHTTPRequestHandler):
             db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
             
             unpopulated = len(db.get_unpopulated_models())
+
+            # Dashboard analytics stats
+            stats = db.get_dashboard_stats()
             
             downloads_file = os.path.join(self.root_dir, ".backend", "cache", "downloads.json")
             active_downloads = 0
@@ -1178,13 +1318,157 @@ class AIWebServer(BaseHTTPRequestHandler):
                     jobs = json.load(f)
                     active_downloads = sum(1 for j in jobs.values() if j.get("status") not in ["completed", "failed"])
             
+            # LAN sharing status
+            settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
+            lan_sharing = False
+            if os.path.exists(settings_path):
+                try:
+                    with open(settings_path, 'r') as f:
+                        lan_sharing = json.load(f).get("lan_sharing", False)
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+            lan_ip = ""
+            if lan_sharing:
+                import socket
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    lan_ip = s.getsockname()[0]
+                    s.close()
+                except Exception:
+                    lan_ip = "unknown"
+
+            # Vault total size on disk
+            vault_dir = os.path.join(self.root_dir, "Global_Vault")
+            vault_size_bytes = 0
+            if os.path.exists(vault_dir):
+                for root, dirs, files in os.walk(vault_dir):
+                    for f in files:
+                        try:
+                            vault_size_bytes += os.path.getsize(os.path.join(root, f))
+                        except OSError:
+                            pass
+
+            # Installed / running packages
+            packages_dir = os.path.join(self.root_dir, "packages")
+            installed_packages = 0
+            if os.path.exists(packages_dir):
+                installed_packages = sum(1 for d in os.listdir(packages_dir) if os.path.isdir(os.path.join(packages_dir, d)))
+            running_packages = len(AIWebServer.running_processes)
+
             self.send_json_response({
                 "unpopulated_models": unpopulated,
                 "active_downloads": active_downloads,
-                "is_syncing": (unpopulated > 0 or active_downloads > 0)
+                "is_syncing": (unpopulated > 0 or active_downloads > 0),
+                "lan_sharing": lan_sharing,
+                "lan_ip": lan_ip,
+                # Sprint 8: Dashboard analytics
+                "total_models": stats.get('total_models', 0),
+                "total_generations": stats.get('total_generations', 0),
+                "prompts_saved": stats.get('prompts_saved', 0),
+                "vault_size_bytes": vault_size_bytes,
+                "installed_packages": installed_packages,
+                "running_packages": running_packages
             })
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
+
+    # ── Prompt Library Handlers ─────────────────────────────────────
+
+    def handle_list_prompts(self):
+        try:
+            from urllib.parse import urlparse, parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            search = qs.get("search", [None])[0]
+            limit = int(qs.get("limit", [100])[0])
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from metadata_db import MetadataDB
+            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+            prompts = db.list_prompts(search=search, limit=limit)
+            self.send_json_response({"status": "success", "prompts": prompts})
+        except Exception as e:
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
+
+    def handle_save_prompt(self, data):
+        title = data.get("title", "").strip()
+        if not title:
+            self.send_json_response({"status": "error", "message": "Title is required"}, 400)
+            return
+        try:
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from metadata_db import MetadataDB
+            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+            row_id = db.save_prompt(
+                title=title,
+                prompt=data.get("prompt", ""),
+                negative=data.get("negative", ""),
+                model=data.get("model", ""),
+                tags=data.get("tags", ""),
+                extra_json=json.dumps(data.get("extra", {})) if data.get("extra") else None
+            )
+            self.send_json_response({"status": "success", "id": row_id})
+        except Exception as e:
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
+
+    def handle_delete_prompt(self, data):
+        prompt_id = data.get("id")
+        if not prompt_id:
+            self.send_json_response({"status": "error", "message": "Missing id"}, 400)
+            return
+        try:
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from metadata_db import MetadataDB
+            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+            db.delete_prompt(prompt_id)
+            self.send_json_response({"status": "success"})
+        except Exception as e:
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
+
+    # ── Bulk Vault Operations Handler ──────────────────────────────
+
+    def handle_vault_bulk_delete(self, data):
+        models = data.get("models", [])
+        if not models:
+            self.send_json_response({"status": "error", "message": "No models specified"}, 400)
+            return
+
+        deleted_count = 0
+        failed = []
+        filenames_to_remove = []
+
+        for m in models:
+            filename = m.get("filename")
+            category = m.get("category")
+            if not filename or not category:
+                failed.append({"filename": filename, "reason": "Missing filename or category"})
+                continue
+            filepath = os.path.join(self.root_dir, "Global_Vault", category, filename)
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                    filenames_to_remove.append(filename)
+                    deleted_count += 1
+                except Exception as e:
+                    failed.append({"filename": filename, "reason": str(e)})
+            else:
+                failed.append({"filename": filename, "reason": "File not found"})
+
+        # Batch remove DB entries
+        if filenames_to_remove:
+            try:
+                sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+                from metadata_db import MetadataDB
+                db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+                db.remove_models_by_filenames(filenames_to_remove)
+            except Exception as e:
+                logging.error(f"DB cleanup after bulk delete failed: {e}")
+
+        self.send_json_response({
+            "status": "success",
+            "deleted": deleted_count,
+            "failed": failed
+        })
 
 
 def start_background_scanners():
@@ -1212,8 +1496,32 @@ def start_background_scanners():
     logging.info("Spawned async backend scanners...")
 
 def run_server(port=8080):
-    server_address = ('', port)
+    # Check settings for LAN sharing
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    settings_path = os.path.join(root_dir, ".backend", "settings.json")
+    lan_sharing = False
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, 'r') as f:
+                lan_sharing = json.load(f).get("lan_sharing", False)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    host = '0.0.0.0' if lan_sharing else ''
+    server_address = (host, port)
     httpd = ThreadingHTTPServer(server_address, AIWebServer)
+
+    if lan_sharing:
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            lan_ip = s.getsockname()[0]
+            s.close()
+            logging.info(f"LAN sharing enabled — accessible at http://{lan_ip}:{port}")
+        except Exception:
+            logging.info(f"LAN sharing enabled — accessible at http://0.0.0.0:{port}")
+    
     logging.info(f"Starting lightweight Web Server on http://localhost:{port}")
     start_background_scanners()
     try:

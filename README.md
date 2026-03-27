@@ -23,6 +23,12 @@ Ultra-fast background crawlers hash multi-GB safetensors and automatically scrap
 ### 🖼️ Studio Analytics
 Persistent SQLite-backed gallery of all your generations. Drag any thumbnail to instantly restore the exact seed, steps, model, prompt, and configuration back onto the canvas.
 
+### 📊 Dashboard & Command Palette
+Real-time system health dashboard with live analytics cards. Power-user keyboard navigation via `Ctrl+K` command palette with fuzzy search across all application commands.
+
+### 📦 Vault Export & Backup
+Export model metadata or full model archives as portable ZIP files. Selective bulk operations for multi-model management.
+
 ### 🔄 Self-Healing Updates
 One-click OTA ghost upgrades that patch the dashboard without touching your models, settings, or installed apps.
 
@@ -84,7 +90,7 @@ Any AI agent modifying this codebase must read and comply with `agents.md` befor
 
 ### Skills
 
-Six single-responsibility skills in `.agents/skills/`:
+Seven single-responsibility skills in `.agents/skills/`:
 
 | Skill | Purpose |
 |-------|---------|
@@ -94,6 +100,7 @@ Six single-responsibility skills in `.agents/skills/`:
 | **Asset Crawler & Metadata Scraper** | Background hashing, metadata, and embeddings |
 | **Canvas Gallery Restore** | Persistent generation gallery with parameter restore |
 | **OTA Ghost Updater** | Self-healing code updates preserving user data |
+| **Intelligent Model Router** | AI model tier selection for development tasks |
 
 ---
 

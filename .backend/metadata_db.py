@@ -10,7 +10,8 @@ class MetadataDB:
         self._init_db()
 
     def _init_db(self):
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        if self.db_path != ':memory:':
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -77,6 +78,20 @@ class MetadataDB:
             file_hash TEXT,
             tag TEXT,
             UNIQUE(file_hash, tag)
+        )
+        ''')
+
+        # Prompt Library table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS prompts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            prompt TEXT,
+            negative TEXT,
+            model TEXT,
+            tags TEXT,
+            extra_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
         
@@ -268,6 +283,117 @@ class MetadataDB:
         conn.commit()
         conn.close()
 
+    # ── Prompt Library ──────────────────────────────────────────────
+
+    def save_prompt(self, title: str, prompt: str = "", negative: str = "", model: str = "", tags: str = "", extra_json: str = None) -> int:
+        """Saves a favorite prompt to the library. Returns the new row ID."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+        INSERT INTO prompts (title, prompt, negative, model, tags, extra_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ''', (title, prompt, negative, model, tags, extra_json))
+        rowid = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return rowid
+
+    def list_prompts(self, search: str = None, limit: int = 100) -> list:
+        """Returns saved prompts, optionally filtered by title/content substring."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        if search:
+            like = f"%{search}%"
+            cursor.execute(
+                'SELECT * FROM prompts WHERE title LIKE ? OR prompt LIKE ? ORDER BY id DESC LIMIT ?',
+                (like, like, limit)
+            )
+        else:
+            cursor.execute('SELECT * FROM prompts ORDER BY id DESC LIMIT ?', (limit,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def delete_prompt(self, prompt_id: int) -> None:
+        """Deletes a saved prompt by ID."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('DELETE FROM prompts WHERE id = ?', (prompt_id,))
+        conn.commit()
+        conn.close()
+
+    # ── Bulk Vault Operations ───────────────────────────────────────
+
+    def remove_models_by_filenames(self, filenames: list) -> int:
+        """Batch-delete models by filename within a single transaction. Returns count deleted."""
+        if not filenames:
+            return 0
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        deleted = 0
+        try:
+            for fn in filenames:
+                cursor.execute('DELETE FROM models WHERE filename = ?', (fn,))
+                deleted += cursor.rowcount
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return deleted
+
+    def remove_model_by_filename(self, filename: str) -> None:
+        """Removes a single model entry by filename."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('DELETE FROM models WHERE filename = ?', (filename,))
+        conn.commit()
+        conn.close()
+
+    # ── Vault Export ────────────────────────────────────────────────
+
+    def export_models_metadata(self, filenames: list) -> list:
+        """Returns full metadata dicts for a list of filenames, for portable backup manifests."""
+        if not filenames:
+            return []
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        results = []
+        for fn in filenames:
+            cursor.execute('SELECT * FROM models WHERE filename = ?', (fn,))
+            row = cursor.fetchone()
+            if row:
+                d = dict(row)
+                d['user_tags'] = self.get_user_tags(d.get('file_hash', ''))
+                results.append(d)
+        conn.close()
+        return results
+
+    # ── Dashboard Analytics ─────────────────────────────────────────
+
+    def get_dashboard_stats(self) -> dict:
+        """Returns aggregate statistics for the dashboard analytics widget."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT COUNT(*) FROM models')
+        total_models = cursor.fetchone()[0]
+
+        cursor.execute('SELECT COUNT(*) FROM generations')
+        total_generations = cursor.fetchone()[0]
+
+        cursor.execute('SELECT COUNT(*) FROM prompts')
+        prompts_saved = cursor.fetchone()[0]
+
+        conn.close()
+        return {
+            'total_models': total_models,
+            'total_generations': total_generations,
+            'prompts_saved': prompts_saved
+        }
+
 if __name__ == "__main__":
     db_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".backend", "metadata.sqlite")
     MetadataDB(db_file)
+

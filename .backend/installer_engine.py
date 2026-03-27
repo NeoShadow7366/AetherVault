@@ -3,11 +3,181 @@ import sys
 import json
 import logging
 import subprocess
+import re
+import threading
+import time
 
 # Ensure we import the safe symlinking code
 from symlink_manager import create_safe_directory_link
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+
+
+# ── Extension Clone Progress Tracker ────────────────────────────────
+
+class ExtensionCloneTracker:
+    """Tracks git clone progress for extension installs with cross-platform output parsing."""
+
+    _PROGRESS_RE = re.compile(r'(\w[\w\s]+?):\s+(\d+)%\s+\((\d+)/(\d+)\)')
+
+    def __init__(self, root_dir: str):
+        self.root_dir = root_dir
+        self.jobs_file = os.path.join(root_dir, ".backend", "cache", "extension_jobs.json")
+        os.makedirs(os.path.dirname(self.jobs_file), exist_ok=True)
+
+    def _read_jobs(self) -> dict:
+        if os.path.exists(self.jobs_file):
+            try:
+                with open(self.jobs_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {}
+
+    def _write_jobs(self, jobs: dict) -> None:
+        with open(self.jobs_file, 'w', encoding='utf-8') as f:
+            json.dump(jobs, f, indent=2)
+
+    def _update_job(self, job_id: str, updates: dict) -> None:
+        jobs = self._read_jobs()
+        if job_id not in jobs:
+            jobs[job_id] = {}
+        jobs[job_id].update(updates)
+        self._write_jobs(jobs)
+
+    def get_job_status(self, job_id: str) -> dict:
+        jobs = self._read_jobs()
+        return jobs.get(job_id, {})
+
+    def cancel_job(self, job_id: str) -> bool:
+        """Cancel a running clone by killing its PID."""
+        job = self.get_job_status(job_id)
+        pid = job.get("pid")
+        if not pid:
+            return False
+        try:
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)], check=False,
+                                capture_output=True)
+            else:
+                import signal
+                os.kill(pid, signal.SIGTERM)
+            self._update_job(job_id, {"status": "cancelled", "progress_text": "Cancelled by user"})
+            return True
+        except (ProcessLookupError, OSError) as e:
+            logging.warning(f"Failed to cancel clone job {job_id}: {e}")
+            return False
+
+    def clone_with_progress(self, repo_url: str, target_dir: str, job_id: str) -> None:
+        """Clone a git repo with real-time progress tracking.
+
+        This runs in the calling thread (expected to be spawned as a background thread).
+        Progress is written to extension_jobs.json for /api/extensions/status polling.
+        """
+        self._update_job(job_id, {
+            "status": "cloning",
+            "repo_url": repo_url,
+            "target_dir": target_dir,
+            "percent": 0,
+            "progress_text": "Starting clone...",
+            "log_lines": [],
+            "pid": None
+        })
+
+        cmd = ["git", "clone", "--progress", repo_url]
+        kwargs = {}
+        if os.name == 'nt':
+            kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x200)
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=target_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                **kwargs
+            )
+            self._update_job(job_id, {"pid": proc.pid})
+
+            # Git clone --progress writes to stderr
+            log_lines = []
+            buffer = b""
+
+            while True:
+                chunk = proc.stderr.read(1)
+                if not chunk:
+                    break
+
+                if chunk in (b'\r', b'\n'):
+                    if buffer:
+                        line_text = buffer.decode('utf-8', errors='replace').strip()
+                        buffer = b""
+                        if line_text:
+                            log_lines.append(line_text)
+                            # Keep last 50 lines only
+                            if len(log_lines) > 50:
+                                log_lines = log_lines[-50:]
+
+                            # Parse percentage from git progress output
+                            match = self._PROGRESS_RE.search(line_text)
+                            percent = 0
+                            if match:
+                                percent = int(match.group(2))
+
+                            self._update_job(job_id, {
+                                "progress_text": line_text,
+                                "percent": percent,
+                                "log_lines": log_lines
+                            })
+                else:
+                    buffer += chunk
+
+            # Process remaining buffer
+            if buffer:
+                line_text = buffer.decode('utf-8', errors='replace').strip()
+                if line_text:
+                    log_lines.append(line_text)
+
+            proc.wait()
+            exit_code = proc.returncode
+
+            # Read any remaining stdout
+            stdout_data = proc.stdout.read().decode('utf-8', errors='replace').strip()
+            if stdout_data:
+                log_lines.extend(stdout_data.split('\n'))
+
+            if exit_code == 0:
+                self._update_job(job_id, {
+                    "status": "completed",
+                    "percent": 100,
+                    "progress_text": "Clone completed successfully",
+                    "log_lines": log_lines,
+                    "pid": None
+                })
+                logging.info(f"Extension clone {job_id} completed successfully.")
+            else:
+                self._update_job(job_id, {
+                    "status": "failed",
+                    "progress_text": f"Clone failed with exit code {exit_code}",
+                    "log_lines": log_lines,
+                    "pid": None
+                })
+                logging.error(f"Extension clone {job_id} failed with exit code {exit_code}.")
+
+        except FileNotFoundError:
+            self._update_job(job_id, {
+                "status": "failed",
+                "progress_text": "Git executable not found. Is git installed and on PATH?",
+                "pid": None
+            })
+            logging.error(f"Extension clone {job_id}: git not found.")
+        except Exception as e:
+            self._update_job(job_id, {
+                "status": "failed",
+                "progress_text": f"Unexpected error: {str(e)}",
+                "pid": None
+            })
+            logging.error(f"Extension clone {job_id} error: {e}")
 
 class RecipeInstaller:
     """Config-Driven AI Package Installer Engine"""
