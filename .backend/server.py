@@ -4,7 +4,7 @@ import sqlite3
 import json
 import logging
 import subprocess
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -13,6 +13,16 @@ class AIWebServer(BaseHTTPRequestHandler):
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(root_dir, ".backend", "metadata.sqlite")
     static_dir = os.path.join(root_dir, ".backend", "static")
+    running_processes = {}  # PID tracking for launched packages
+
+    def do_OPTIONS(self):
+        """Handle CORS preflight requests."""
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -73,7 +83,8 @@ class AIWebServer(BaseHTTPRequestHandler):
         
         try:
             data = json.loads(body.decode('utf-8'))
-        except:
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            logging.warning(f"Failed to parse POST body as JSON: {e}")
             data = {}
 
         if path == "/api/install":
@@ -124,6 +135,8 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.handle_comfy_proxy(data)
         elif path == "/api/a1111_proxy":
             self.handle_a1111_proxy(data)
+        elif path == "/api/forge_proxy":
+            self.handle_forge_proxy(data)
         elif path == "/api/fooocus_proxy":
             self.handle_fooocus_proxy(data)
         else:
@@ -237,8 +250,8 @@ class AIWebServer(BaseHTTPRequestHandler):
                             with open(manifest_path, 'r', encoding='utf-8') as f:
                                 manifest = json.load(f)
                                 pkg_info["name"] = manifest.get("name", d.capitalize())
-                        except:
-                            pass
+                        except (json.JSONDecodeError, OSError) as e:
+                            logging.warning(f"Failed to read manifest for {d}: {e}")
                     packages.append(pkg_info)
                     
         self.send_json_response({"status": "success", "packages": packages})
@@ -491,11 +504,12 @@ class AIWebServer(BaseHTTPRequestHandler):
         settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
         if os.path.exists(settings_path):
             try:
-                with open(settings_path, 'r') as f:
+                with open(settings_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 self.send_json_response(data)
                 return
-            except: pass
+            except (json.JSONDecodeError, OSError) as e:
+                logging.warning(f"Failed to read settings.json, returning defaults: {e}")
         self.send_json_response({"theme": "dark", "civitai_api_key": "", "auto_updates": True})
 
     def handle_save_settings(self, data):
@@ -799,10 +813,19 @@ class AIWebServer(BaseHTTPRequestHandler):
         if not endpoint:
             self.send_json_response({"error": "No endpoint specified"}, 400)
             return
+            
+        payload = data.get("payload")
+        if endpoint == "/api/generate" and payload:
+            from proxy_translators import build_comfy_workflow
+            try:
+                payload = build_comfy_workflow(payload)
+                endpoint = "/prompt"
+            except Exception as e:
+                self.send_json_response({"error": str(e)}, 400)
+                return
 
         import urllib.request
         url = f"http://127.0.0.1:8188{endpoint}"
-        payload = data.get("payload")
         
         try:
             if payload:
@@ -810,7 +833,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             else:
                 req = urllib.request.Request(url)
             
-            with urllib.request.urlopen(req) as res:
+            with urllib.request.urlopen(req, timeout=30) as res:
                 content = res.read().decode('utf-8')
                 self.send_json_response(json.loads(content))
         except Exception as e:
@@ -827,7 +850,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         
         try:
             req = urllib.request.Request(url)
-            with urllib.request.urlopen(req) as res:
+            with urllib.request.urlopen(req, timeout=10) as res:
                 img_data = res.read()
                 
             self.send_response(200)
@@ -848,7 +871,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             
             url = f"http://127.0.0.1:8188/upload/image"
             req = urllib.request.Request(url, data=body, headers={'Content-Type': self.headers['Content-Type']})
-            with urllib.request.urlopen(req) as res:
+            with urllib.request.urlopen(req, timeout=30) as res:
                 self.send_json_response(json.loads(res.read().decode('utf-8')))
         except Exception as e:
             self.send_json_response({"error": str(e)}, 500)
@@ -856,11 +879,48 @@ class AIWebServer(BaseHTTPRequestHandler):
     def handle_a1111_proxy(self, data):
         payload = data.get("payload")
         endpoint = data.get("endpoint", "/sdapi/v1/txt2img")
+        
+        if endpoint == "/api/generate" and payload:
+            import sys, os
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from proxy_translators import build_a1111_payload
+            try:
+                payload = build_a1111_payload(payload)
+                endpoint = "/sdapi/v1/img2img" if "init_images" in payload else "/sdapi/v1/txt2img"
+            except Exception as e:
+                self.send_json_response({"error": str(e)}, 400)
+                return
+                
         import urllib.request
         url = f"http://127.0.0.1:7860{endpoint}"
         try:
             req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req) as res:
+            with urllib.request.urlopen(req, timeout=30) as res:
+                content = res.read().decode('utf-8')
+                self.send_json_response(json.loads(content))
+        except Exception as e:
+            self.send_json_response({"error": str(e)}, 500)
+
+    def handle_forge_proxy(self, data):
+        payload = data.get("payload")
+        endpoint = data.get("endpoint", "/sdapi/v1/txt2img")
+        
+        if endpoint == "/api/generate" and payload:
+            import sys, os
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from proxy_translators import build_a1111_payload
+            try:
+                payload = build_a1111_payload(payload)
+                endpoint = "/sdapi/v1/img2img" if "init_images" in payload else "/sdapi/v1/txt2img"
+            except Exception as e:
+                self.send_json_response({"error": str(e)}, 400)
+                return
+                
+        import urllib.request
+        url = f"http://127.0.0.1:7861{endpoint}"
+        try:
+            req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=30) as res:
                 content = res.read().decode('utf-8')
                 self.send_json_response(json.loads(content))
         except Exception as e:
@@ -868,30 +928,26 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_fooocus_proxy(self, data):
         payload = data.get("payload")
+        endpoint = data.get("endpoint", "/v1/generation/text-to-image")
+        
+        if endpoint == "/api/generate" and payload:
+            import sys, os
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from proxy_translators import build_fooocus_payload
+            try:
+                payload = build_fooocus_payload(payload)
+                endpoint = "/v1/generation/text-to-image"
+            except Exception as e:
+                self.send_json_response({"error": str(e)}, 400)
+                return
+                
         import urllib.request
-        url = "http://127.0.0.1:8888/v1/generation/text-to-image"
+        url = f"http://127.0.0.1:8888{endpoint}"
         try:
             req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req) as res:
+            with urllib.request.urlopen(req, timeout=30) as res:
                 content = res.read().decode('utf-8')
                 self.send_json_response(json.loads(content))
-        except Exception as e:
-            self.send_json_response({"error": str(e)}, 500)
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
-            
-            req = urllib.request.Request("http://127.0.0.1:8188/upload/image", data=post_data, method="POST")
-            req.add_header('Content-Type', self.headers.get('Content-Type'))
-            req.add_header('Origin', 'http://127.0.0.1:8188')
-            req.add_header('Host', '127.0.0.1:8188')
-            
-            with urllib.request.urlopen(req) as res:
-                res_body = res.read().decode('utf-8')
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(res_body.encode('utf-8'))
         except Exception as e:
             self.send_json_response({"error": str(e)}, 500)
 
@@ -920,22 +976,11 @@ class AIWebServer(BaseHTTPRequestHandler):
     def send_json_response(self, data, status=200):
         self.send_response(status)
         self.send_header("Content-type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode("utf-8"))
 
-    def handle_hf_search(self):
-        from urllib.parse import urlparse, parse_qs
-        qs = parse_qs(urlparse(self.path).query)
-        q = qs.get("query", [""])[0]
-        limit = int(qs.get("limit", [20])[0])
-        
-        try:
-            from hf_client import HFClient
-            hfc = HFClient(api_key=None) # Optional: load from settings
-            results = hfc.search_models(query=q, limit=limit)
-            self.send_json_response({"status": "success", "items": results})
-        except Exception as e:
-            self.send_json_response({"status": "error", "message": str(e)}, 500)
+
 
     def handle_vault_search(self):
         try:
@@ -1022,7 +1067,15 @@ class AIWebServer(BaseHTTPRequestHandler):
         from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(self.path).query)
         query = qs.get("query", [""])[0]
+        type_filter = qs.get("type", [""])[0]
         limit = int(qs.get("limit", [40])[0])
+        
+        # Augment query for Text Encoder searches
+        if type_filter == "Text Encoder":
+            if not query:
+                query = "clip t5-xxl encoder"
+            else:
+                query += " clip t5 encoder"
         
         try:
             sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
@@ -1034,7 +1087,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                     s = json.load(f)
                     api_key = s.get("hf_api_key")
             
-            client = HFClient(token=api_key)
+            client = HFClient(api_key=api_key)
             result = client.search_models(query=query, limit=limit)
             self.send_json_response({"status": "success", "items": result})
         except Exception as e:
@@ -1118,7 +1171,7 @@ def start_background_scanners():
 
 def run_server(port=8080):
     server_address = ('', port)
-    httpd = HTTPServer(server_address, AIWebServer)
+    httpd = ThreadingHTTPServer(server_address, AIWebServer)
     logging.info(f"Starting lightweight Web Server on http://localhost:{port}")
     start_background_scanners()
     try:

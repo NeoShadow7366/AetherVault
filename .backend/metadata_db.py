@@ -14,6 +14,9 @@ class MetadataDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
+        # Enable WAL mode for concurrent read/write safety
+        cursor.execute('PRAGMA journal_mode=WAL')
+        
         # Create Models Table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS models (

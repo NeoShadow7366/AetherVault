@@ -92,10 +92,14 @@ class HFClient:
         return formatted
 
     def infer_base_model(self, tags):
+        if not tags: return "Unknown"
         for t in tags:
-            if "sdxl" in t.lower(): return "SDXL 1.0"
-            if "sd15" in t.lower() or "stable-diffusion-v1-5" in t.lower(): return "SD 1.5"
-            if "flux" in t.lower(): return "Flux.1"
+            t_lower = str(t).lower()
+            if "sdxl" in t_lower or "sd-xl" in t_lower: return "SDXL 1.0"
+            if "sd15" in t_lower or "stable-diffusion-v1-5" in t_lower or "sd 1.5" in t_lower: return "SD 1.5"
+            if "flux" in t_lower: return "Flux.1"
+            if "sd3" in t_lower or "stable-diffusion-3" in t_lower: return "SD 3"
+            if "pony" in t_lower: return "Pony"
         return "Unknown"
 
 if __name__ == "__main__":

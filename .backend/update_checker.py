@@ -2,8 +2,9 @@ import os
 import sys
 import json
 import time
-import requests
 import logging
+import urllib.request
+import urllib.error
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
@@ -22,18 +23,20 @@ def check_for_updates():
     models = db.get_models_for_update_check()
     
     # Optional: fetch user's CivitAI API key if available
-    # but base info doesn't strictly need it unless model is early access/hidden
     api_key_path = os.path.join(ROOT_DIR, 'settings.json')
     api_key = ""
     if os.path.exists(api_key_path):
         try:
-            with open(api_key_path, 'r') as f:
+            with open(api_key_path, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
                 api_key = settings.get("civitai_api_key", "")
-        except:
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            logging.warning(f"Failed to read settings for API key: {e}")
             
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "AIManager/1.0"
+    }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
@@ -51,7 +54,7 @@ def check_for_updates():
                     "file_hash": row['file_hash'],
                     "version_id": version_id
                 })
-        except Exception as e:
+        except Exception:
             continue
 
     updates_found = 0
@@ -59,29 +62,31 @@ def check_for_updates():
     for model_id, items in model_groups.items():
         try:
             url = f"https://civitai.com/api/v1/models/{model_id}"
-            res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                versions = data.get("modelVersions", [])
-                if not versions: continue
-                # The first item in modelVersions is the highest/newest by CivitAI standards
-                latest_version = versions[0]
-                latest_version_id = latest_version.get("id")
-                
-                # Compare against all our installed files for this model
-                for item in items:
-                    v_id = item["version_id"]
-                    # If the latest is physically different from what we crawled as this file's version
-                    # (and assume IDs increment over time)
-                    if latest_version_id and latest_version_id != v_id:
-                        db.set_model_update_status(item["file_hash"], 1, latest_version_id)
-                        updates_found += 1
-                        logging.info(f"Update available for model #{model_id}: v{v_id} -> v{latest_version_id}")
-                    else:
-                        db.set_model_update_status(item["file_hash"], 0, None)
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode('utf-8'))
+                    versions = data.get("modelVersions", [])
+                    if not versions:
+                        continue
+                    # The first item in modelVersions is the highest/newest by CivitAI standards
+                    latest_version = versions[0]
+                    latest_version_id = latest_version.get("id")
+                    
+                    # Compare against all our installed files for this model
+                    for item in items:
+                        v_id = item["version_id"]
+                        if latest_version_id and latest_version_id != v_id:
+                            db.set_model_update_status(item["file_hash"], 1, latest_version_id)
+                            updates_found += 1
+                            logging.info(f"Update available for model #{model_id}: v{v_id} -> v{latest_version_id}")
+                        else:
+                            db.set_model_update_status(item["file_hash"], 0, None)
             
             # Rate limit politeness
             time.sleep(1.0)
+        except urllib.error.HTTPError as e:
+            logging.warning(f"HTTP error checking model {model_id}: {e.code}")
         except Exception as e:
             logging.warning(f"Error checking model {model_id} for updates: {e}")
 

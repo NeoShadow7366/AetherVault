@@ -59,11 +59,16 @@ class CivitaiClient:
             
         req = urllib.request.Request(image_url, headers=self.headers)
         try:
-            with urllib.request.urlopen(req, timeout=15) as response, open(filepath, 'wb') as f:
-                f.write(response.read())
+            with urllib.request.urlopen(req, timeout=15) as response:
+                img_data = response.read()
+            with open(filepath, 'wb') as f:
+                f.write(img_data)
             return filepath
         except Exception as e:
             logging.error(f"Failed to download thumbnail from {image_url}: {e}")
+            if os.path.exists(filepath):
+                try: os.remove(filepath)
+                except: pass
             return None
 
     def process_unpopulated_models(self):

@@ -26,7 +26,14 @@ logs/
 # Backend generated state
 .backend/__pycache__/
 .backend/cache/
+.backend/cache/thumbnails/
 .backend/metadata.sqlite
+.backend/settings.json
+
+# Model Caches
+.cache/
+~/.cache/
+~/.cache/huggingface/
 
 # Build outputs
 dist/
@@ -35,3 +42,12 @@ dist/
 bin/
 Global_Vault/
 packages/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Agent runtime (conversation context)
+.gemini/

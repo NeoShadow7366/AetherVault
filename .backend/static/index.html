@@ -445,6 +445,25 @@
             grid-column: 1 / -1;
         }
 
+        /* BUG-11/12/13 fix: Prevent input overflow in Studio */
+        #view-inference input,
+        #view-inference select,
+        .select-fancy {
+            box-sizing: border-box;
+            max-width: 100%;
+            min-width: 0;
+        }
+
+        /* BUG-9: Progress pulse animation */
+        @keyframes progressPulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+        .progress-pulsing {
+            animation: progressPulse 1.5s ease-in-out infinite;
+        }
+
     </style>
 </head>
 <body>
@@ -479,20 +498,30 @@
                     <option value="Highest Rated">Highest Rated</option>
                     <option value="Most Downloaded">Most Downloaded</option>
                     <option value="Newest">Newest</option>
+                    <option value="Size High">Size (Largest)</option>
+                    <option value="Size Low">Size (Smallest)</option>
                     <option value="Favorites">🌟 Favorites</option>
                 </select>
                 
                 <select id="ex-type" onchange="loadExplorer()">
                     <option value="">All Types</option>
                     <option value="Checkpoint">Checkpoint</option>
-                    <option value="Controlnet">ControlNet</option>
-                    <option value="DoRA">DoRA</option>
-                    <option value="Hypernetwork">Hypernetwork</option>
-                    <option value="LoCon">LoCon</option>
-                    <option value="LORA">LoRA</option>
                     <option value="TextualInversion">Embedding / TextualInversion</option>
+                    <option value="Hypernetwork">Hypernetwork</option>
+                    <option value="AestheticGradient">Aesthetic Gradient</option>
+                    <option value="LORA">LoRA</option>
+                    <option value="LoCon">LoCon / LyCORIS</option>
+                    <option value="DoRA">DoRA</option>
+                    <option value="Controlnet">Controlnet</option>
                     <option value="Upscaler">Upscaler</option>
+                    <option value="MotionModule">Motion</option>
                     <option value="VAE">VAE</option>
+                    <option value="Poses">Poses</option>
+                    <option value="Wildcards">Wildcards</option>
+                    <option value="Workflows">Workflows</option>
+                    <option value="Detection">Detection</option>
+                    <option value="Other">Other</option>
+                    <option value="Text Encoder">Text Encoder (CLIP/T5)</option>
                 </select>
 
                 <select id="ex-base" onchange="loadExplorer()">
@@ -719,18 +748,21 @@
             </div>
         </div>
     </div>
-    <!-- CivitAI Settings Modal -->
+    <!-- API Authentication Modal -->
     <div class="lightbox-overlay" id="settings-modal" style="display:none; align-items:center; justify-content:center;" onclick="if(event.target===this) toggleSettings()">
         <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:450px; padding:30px; box-shadow:0 10px 30px rgba(0,0,0,0.5);">
-            <h2 style="margin:0 0 10px;">CivitAI Authenticaton</h2>
-            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:20px;">Provide your API Key to download gated or early-access models.</p>
+            <h2 style="margin:0 0 10px;">API Authentication</h2>
+            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:20px;">Provide API keys to access gated models and early-access content.</p>
             
             <label class="section-title">CivitAI API Key</label>
-            <input type="password" id="settings-api-key" class="select-fancy" style="width:100%; margin-bottom:20px;" placeholder="Paste API Key here...">
+            <input type="password" id="settings-api-key" class="select-fancy" style="width:100%; margin-bottom:15px;" placeholder="Paste CivitAI API Key here...">
+            
+            <label class="section-title">HuggingFace API Key</label>
+            <input type="password" id="settings-hf-api-key" class="select-fancy" style="width:100%; margin-bottom:20px;" placeholder="Paste HF token for gated models...">
             
             <div style="display:flex; justify-content:flex-end; gap:10px;">
                 <button onclick="toggleSettings()" style="background:none; border:none; color:var(--text-muted); cursor:pointer;">Cancel</button>
-                <button onclick="saveSettings()" style="background:var(--primary); color:#fff; border:none; padding:10px 20px; border-radius:8px; font-weight:600; cursor:pointer;">Save Key</button>
+                <button onclick="saveExplorerApiKeys()" style="background:var(--primary); color:#fff; border:none; padding:10px 20px; border-radius:8px; font-weight:600; cursor:pointer;">Save Keys</button>
             </div>
         </div>
     </div>
@@ -883,7 +915,8 @@
                     <label class="section-title">Inference Engine</label>
                     <select id="inf-engine" class="select-fancy" onchange="onEngineChange(this.value)">
                         <option value="comfyui">ComfyUI (Default)</option>
-                        <option value="a1111">A1111 / Forge / SD Next</option>
+                        <option value="a1111">Automatic1111</option>
+                        <option value="forge">SD WebUI Forge</option>
                         <option value="fooocus">Fooocus</option>
                     </select>
                 </div>
@@ -921,7 +954,7 @@
                 <!-- FLUX: Guidance (dev only) -->
                 <div id="inf-flux-guidance-row" style="display:none;">
                     <label class="section-title">Guidance Scale <span style="font-size:0.75rem;color:var(--text-muted)">(FLUX-dev)</span></label>
-                    <input type="number" id="inf-flux-guidance" class="select-fancy" value="3.5" step="0.5" min="0" max="20">
+                    <input type="number" id="inf-flux-guidance" class="select-fancy" value="3.5" step="0.5" min="0" max="20" style="width:100%;">
                 </div>
                 <!-- SD: Refiner (hidden in FLUX mode) -->
                 <div id="inf-sd-refiner-row">
@@ -1019,13 +1052,13 @@
                     <input type="number" id="inf-cfg" class="select-fancy" value="7.0" step="0.5" min="1" max="30">
                 </div>
                 <div style="display: flex; gap: 15px;">
-                    <div style="flex: 1;">
+                    <div style="flex: 1; min-width: 0;">
                         <label class="section-title">Width</label>
-                        <input type="number" id="inf-width" class="select-fancy" value="1024" step="64">
+                        <input type="number" id="inf-width" class="select-fancy" value="1024" step="64" style="width:100%;">
                     </div>
-                    <div style="flex: 1;">
+                    <div style="flex: 1; min-width: 0;">
                         <label class="section-title">Height</label>
-                        <input type="number" id="inf-height" class="select-fancy" value="1024" step="64">
+                        <input type="number" id="inf-height" class="select-fancy" value="1024" step="64" style="width:100%;">
                     </div>
                 </div>
                 <div>
@@ -1061,17 +1094,17 @@
                             </select>
                         </div>
                         <div style="display: flex; gap: 15px;">
-                            <div style="flex: 1;">
+                            <div style="flex: 1; min-width: 0;">
                                 <label class="section-title">Scale</label>
-                                <input type="number" id="inf-hires-factor" class="select-fancy" value="1.5" step="0.1" min="1.1" max="4.0">
+                                <input type="number" id="inf-hires-factor" class="select-fancy" value="1.5" step="0.1" min="1.1" max="4.0" style="width:100%;">
                             </div>
-                            <div style="flex: 1;">
+                            <div style="flex: 1; min-width: 0;">
                                 <label class="section-title">Steps</label>
-                                <input type="number" id="inf-hires-steps" class="select-fancy" value="10" min="1" max="50">
+                                <input type="number" id="inf-hires-steps" class="select-fancy" value="10" min="1" max="50" style="width:100%;">
                             </div>
-                            <div style="flex: 1;">
+                            <div style="flex: 1; min-width: 0;">
                                 <label class="section-title">Denoise</label>
-                                <input type="number" id="inf-hires-denoise" class="select-fancy" value="0.4" step="0.05" min="0.0" max="1.0">
+                                <input type="number" id="inf-hires-denoise" class="select-fancy" value="0.4" step="0.05" min="0.0" max="1.0" style="width:100%;">
                             </div>
                         </div>
                     </div>
@@ -1096,9 +1129,9 @@
                             <input type="file" id="inf-cn-file" accept="image/*" style="display: none;" onchange="handleCnUploadFile(this.files[0])">
                         </div>
                         <div style="display: flex; gap: 15px;">
-                            <div style="flex: 1;">
+                            <div style="flex: 1; max-width: 50%;">
                                 <label class="section-title" style="margin: 0; font-size: 0.8rem;">Strength</label>
-                                <input type="number" id="inf-cn-strength" class="select-fancy" value="1.0" step="0.05">
+                                <input type="number" id="inf-cn-strength" class="select-fancy" value="1.0" step="0.05" style="width:100%;">
                             </div>
                         </div>
                     </div>
@@ -1229,101 +1262,18 @@
             if(lower.includes('flux')||lower.includes('f1-')) {
                 const type=lower.includes('schnell')?'flux-schnell':'flux-dev';
                 sel.value=type; onModelTypeChange(type);
-            } else { onModelTypeChange('sd'); }
+            } else if(lower.includes('xl')||lower.includes('sdxl')) {
+                sel.value='sdxl'; onModelTypeChange('sdxl');
+            } else {
+                sel.value='sd'; onModelTypeChange('sd');
+            }
         }
 
         function onEngineChange(type) {
             console.log("Switched inference engine to: " + type);
         }
 
-        async function executeFluxInference() {
-            const modelType=document.getElementById('inf-model-type').value;
-            const unet_name=document.getElementById('inf-flux-unet').value;
-            const clip_l=document.getElementById('inf-flux-clip-l').value;
-            const t5xxl=document.getElementById('inf-flux-t5xxl').value;
-            const vae_name=document.getElementById('inf-vae').value;
-            const prompt=document.getElementById('inf-prompt').value;
-            const seed=parseInt(document.getElementById('inf-seed').value);
-            const actualSeed=seed===-1?Math.floor(Math.random()*1e15):seed;
-            const steps=parseInt(document.getElementById('inf-steps').value);
-            const width=parseInt(document.getElementById('inf-width').value);
-            const height=parseInt(document.getElementById('inf-height').value);
-            const guidance=parseFloat(document.getElementById('inf-flux-guidance')?.value||3.5);
-            const isSchnell=modelType==='flux-schnell';
-            if(!unet_name) return alert('Select a FLUX UNET model!');
-            if(!clip_l) return alert('Select a CLIP-L encoder!');
-            if(!t5xxl) return alert('Select a T5-XXL encoder!');
-
-            const workflow={
-                "1":{"inputs":{"unet_name":unet_name,"weight_dtype":"default"},"class_type":"UNETLoader"},
-                "2":{"inputs":{"clip_name1":clip_l,"clip_name2":t5xxl,"type":"flux"},"class_type":"DualCLIPLoader"},
-                "3":{"inputs":{"vae_name":(vae_name!=='none'?vae_name:"ae.safetensors")},"class_type":"VAELoader"},
-                "4":{"inputs":{"text":prompt,"clip":["2",0]},"class_type":"CLIPTextEncode"},
-                "5":{"inputs":{"width":width,"height":height,"batch_size":1},"class_type":"EmptySD3LatentImage"},
-                "7":{"inputs":{"max_shift":isSchnell?0.5:1.15,"base_shift":0.5,"width":width,"height":height,"model":["1",0]},"class_type":"ModelSamplingFlux"},
-                "10":{"inputs":{"text":"","clip":["2",0]},"class_type":"CLIPTextEncode"}
-            };
-            let positiveCond=["4",0],modelSource=["7",0];
-            if(!isSchnell){ workflow["6"]={"inputs":{"guidance":guidance,"conditioning":["4",0]},"class_type":"FluxGuidance"}; positiveCond=["6",0]; }
-            let latentSource=["5",0];
-            if(window.comfyUploadedImg2Img){
-                workflow["11"]={"inputs":{"image":window.comfyUploadedImg2Img},"class_type":"LoadImage"};
-                workflow["12"]={"inputs":{"pixels":["11",0],"vae":["3",0]},"class_type":"VAEEncode"};
-                latentSource=["12",0];
-            }
-            workflow["8"]={"inputs":{"seed":actualSeed,"steps":steps,"cfg":1.0,"sampler_name":"euler","scheduler":isSchnell?"simple":"beta","denoise":1.0,"model":modelSource,"positive":positiveCond,"negative":["10",0],"latent_image":latentSource},"class_type":"KSampler"};
-            workflow["9"]={"inputs":{"samples":["8",0],"vae":["3",0]},"class_type":"VAEDecode"};
-            workflow["20"]={"inputs":{"filename_prefix":"AIManager_FLUX","images":["9",0]},"class_type":"SaveImage"};
-
-            const doHires=document.getElementById('inf-hires-enable').checked;
-            if(doHires){
-                const hF=parseFloat(document.getElementById('inf-hires-factor').value);
-                const hSt=parseInt(document.getElementById('inf-hires-steps').value);
-                const hDen=parseFloat(document.getElementById('inf-hires-denoise').value);
-                const upP=getHiresUpscalerParams(document.getElementById('inf-hires-upscaler').value);
-                let upL;
-                if(upP.type==='latent'){ workflow["300"]={"inputs":{"upscale_method":upP.method,"scale_by":hF,"samples":["8",0]},"class_type":"LatentUpscaleBy"}; upL=["300",0]; }
-                else{ workflow["301"]={"inputs":{"samples":["8",0],"vae":["3",0]},"class_type":"VAEDecode"}; workflow["302"]={"inputs":{"upscale_method":"bicubic","scale_by":hF,"image":["301",0]},"class_type":"ImageScaleBy"}; workflow["303"]={"inputs":{"pixels":["302",0],"vae":["3",0]},"class_type":"VAEEncode"}; upL=["303",0]; }
-                workflow["305"]={"inputs":{"seed":actualSeed+1,"steps":hSt,"cfg":1.0,"sampler_name":"euler","scheduler":"simple","denoise":hDen,"model":modelSource,"positive":positiveCond,"negative":["10",0],"latent_image":upL},"class_type":"KSampler"};
-                workflow["9"]["inputs"]["samples"]=["305",0];
-            }
-
-            const btn=document.getElementById('inf-generate-btn');
-            const txt=document.getElementById('inf-generate-text');
-            const fill=document.getElementById('inf-progress-fill');
-            fill.style.width='0%'; btn.disabled=true; txt.innerText="Queueing FLUX...";
-            document.getElementById('inf-canvas-img').style.display='none';
-            document.getElementById('inf-canvas-empty').style.display='block';
-            document.getElementById('inf-canvas-empty').innerText="Running FLUX...";
-            try{
-                const res=await fetch('/api/comfy_proxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:'/prompt',payload:{prompt:workflow}})});
-                const data=await res.json();
-                if(data.error) throw new Error(data.error.message||'ComfyUI FLUX Error');
-                window.currentPromptId=data.prompt_id; txt.innerText="Processing FLUX...";
-                if(window.comfyPollInterval) clearInterval(window.comfyPollInterval);
-                window.comfyPollInterval=setInterval(async()=>{
-                    try{
-                        const hR=await fetch('/api/comfy_proxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:`/history/${window.currentPromptId}`})});
-                        const hD=await hR.json();
-                        if(hD[window.currentPromptId]){
-                            clearInterval(window.comfyPollInterval);
-                            for(const nid in hD[window.currentPromptId].outputs){
-                                const outs=hD[window.currentPromptId].outputs[nid];
-                                if(outs.images&&outs.images.length>0){
-                                    const iD=outs.images[0];
-                                    const iUrl=`/api/comfy_image?filename=${iD.filename}&subfolder=${iD.subfolder}&type=${iD.type}&t=${Date.now()}`;
-                                    const cv=document.getElementById('inf-canvas-img');
-                                    cv.src=iUrl; cv.style.display='block';
-                                    document.getElementById('inf-canvas-empty').style.display='none';
-                                    addToGallery(iUrl,workflow);
-                                    btn.disabled=false; txt.innerText="Generate Image"; fill.style.width='0%'; break;
-                                }
-                            }
-                        } else { const p=parseFloat(fill.style.width||'0'); fill.style.width=Math.min(90,p+1.5)+'%'; }
-                    } catch(e){}
-                },1200);
-            } catch(e){ alert("FLUX generation failed: "+e.message); btn.disabled=false; txt.innerText="Generate Image"; }
-        }
+        // executeFluxInference logic moved to server backend
         /* --- Smart Img2Img Drop Handler: supports OS files AND gallery drags --- */
         async function handleDropOnImg2Img(e) {
             // Check for gallery drag first (custom MIME type, no files)
@@ -1352,6 +1302,7 @@
             reader.onload = (ev) => {
                 const prev = document.getElementById('inf-img2img-preview');
                 prev.src = ev.target.result;
+                window.comfyUploadedImg2ImgB64 = ev.target.result.split(',')[1];
                 prev.style.display = 'block';
                 document.getElementById('inf-img2img-text').style.display = 'none';
             };
@@ -1366,6 +1317,7 @@
         
         function clearImg2Img() {
             window.comfyUploadedImg2Img = null;
+            window.comfyUploadedImg2ImgB64 = null;
             document.getElementById('inf-img2img-file').value = "";
             document.getElementById('inf-img2img-preview').style.display = 'none';
             document.getElementById('inf-img2img-text').style.display = 'block';
@@ -1377,6 +1329,7 @@
             reader.onload = (ev) => {
                 const prev = document.getElementById('inf-cn-preview');
                 prev.src = ev.target.result;
+                window.comfyUploadedCnB64 = ev.target.result.split(',')[1];
                 prev.style.display = 'block';
                 document.getElementById('inf-cn-text').style.display = 'none';
             };
@@ -1887,7 +1840,7 @@
             
             if(installedHashes.size === 0) {
                 try {
-                    const lres = await fetch('/api/models');
+                    const lres = await fetch('/api/models?limit=5000');
                     const ldata = await lres.json();
                     if(ldata.models) ldata.models.forEach(m => installedHashes.add(m.metadata?.model?.name || m.filename));
                 } catch(e) {}
@@ -1908,9 +1861,11 @@
 
             const q = document.getElementById('ex-search').value;
 
+            const type = document.getElementById('ex-type').value;
+
             if(source === 'huggingface') {
                 try {
-                    const hfRes = await fetch(`/api/hf/search?query=${encodeURIComponent(q)}&limit=40`);
+                    const hfRes = await fetch(`/api/hf/search?query=${encodeURIComponent(q)}&type=${encodeURIComponent(type)}&limit=40`);
                     const hfData = await hfRes.json();
                     if(hfData.status === 'success') {
                         renderExplorerGrid(hfData.items);
@@ -1923,24 +1878,45 @@
                 return;
             }
 
-            const type = document.getElementById('ex-type').value;
             const base = document.getElementById('ex-base').value;
             const nsfw = document.getElementById('ex-nsfw').checked ? 'true' : 'false';
             const early = document.getElementById('ex-early').checked ? 'true' : 'false';
 
-            let url = new URL('https://civitai.com/api/v1/models');
-            url.searchParams.append('limit', '40');
-            url.searchParams.append('sort', sort);
-            url.searchParams.append('nsfw', nsfw);
-            if(early === 'true') url.searchParams.append('earlyAccess', 'true');
-            if(q) url.searchParams.append('query', q);
-            if(type) url.searchParams.append('types', type);
-            if(base) url.searchParams.append('baseModels', base);
+            let url;
+            let isExactId = false;
+
+            // Direct ID / URL parsing for precision searches
+            const idMatch = q.match(/models\/(\d+)/) || q.match(/^(\d+)$/);
+            if(idMatch) {
+                isExactId = true;
+                url = new URL(`https://civitai.com/api/v1/models/${idMatch[1]}`);
+            } else {
+                url = new URL('https://civitai.com/api/v1/models');
+                url.searchParams.append('limit', '40');
+                url.searchParams.append('sort', sort);
+                url.searchParams.append('nsfw', nsfw);
+                if(early === 'true') url.searchParams.append('earlyAccess', 'true');
+                if(q) url.searchParams.append('query', q);
+                if(type) {
+                    if(type === 'Text Encoder') {
+                        if(!q) url.searchParams.append('query', 'text encoder clip');
+                    } else {
+                        url.searchParams.append('types', type);
+                    }
+                }
+                if(base) url.searchParams.append('baseModels', base);
+            }
 
             try {
                 const res = await fetch(url);
                 const data = await res.json();
-                renderExplorerGrid(data.items);
+                
+                // Unified rendering: If exact ID, it returns a single object instead of data.items
+                if(isExactId) {
+                    renderExplorerGrid(data.id ? [data] : []);
+                } else {
+                    renderExplorerGrid(data.items || []);
+                }
             } catch(e) {
                 grid.innerHTML = `<div class="empty-state" style="color:#ef4444;">Failed to load API: ${e.message}</div>`;
             }
@@ -1952,6 +1928,16 @@
             if(!items || items.length === 0) {
                 grid.innerHTML = '<div class="empty-state">No models found matching criteria.</div>';
                 return;
+            }
+
+            // BUG-1: Client-side size sorting
+            const sort = document.getElementById('ex-sort').value;
+            if(sort === 'Size High' || sort === 'Size Low') {
+                items.sort((a, b) => {
+                    const sizeA = (a.modelVersions && a.modelVersions[0] && a.modelVersions[0].files && a.modelVersions[0].files[0]) ? a.modelVersions[0].files[0].sizeKB || 0 : 0;
+                    const sizeB = (b.modelVersions && b.modelVersions[0] && b.modelVersions[0].files && b.modelVersions[0].files[0]) ? b.modelVersions[0].files[0].sizeKB || 0 : 0;
+                    return sort === 'Size High' ? sizeB - sizeA : sizeA - sizeB;
+                });
             }
 
             const hideInstalled = document.getElementById('ex-installed').checked;
@@ -2084,6 +2070,9 @@
             document.getElementById('lb-tagging-controls').style.display = window.isVaultMode ? 'block' : 'none';
 
             document.getElementById('lightbox').style.display = 'flex';
+            
+            // BUG-3 fix: Explicitly trigger version rendering (onchange doesn't fire from JS)
+            updateLightboxVersion();
         }
 
         function renderLightboxTags(tagsObjList) {
@@ -2159,7 +2148,7 @@
             }
             
             // Download UI Binding
-            let mainFile = v.files.find(f => f.primary) || v.files[0];
+            let mainFile = (v.files && v.files.length > 0) ? (v.files.find(f => f.primary) || v.files[0]) : null;
             const btn = document.getElementById('lb-download-btn');
             const meta = document.getElementById('lb-download-meta');
             
@@ -2169,7 +2158,7 @@
                 meta.innerText = `${mainFile.type} Format • ${mb} MB`;
                 btn.disabled = false;
             } else {
-                btn.innerText = "No Files Available";
+                btn.innerText = window.isVaultMode ? "Already Installed" : "No Files Available";
                 meta.innerText = "";
                 btn.disabled = true;
             }
@@ -2229,7 +2218,7 @@
             }
             
             // Download UI Binding
-            let mainFile = v.files.find(f => f.primary) || v.files[0];
+            let mainFile = (v.files && v.files.length > 0) ? (v.files.find(f => f.primary) || v.files[0]) : null;
             const btnStandard = document.getElementById('lb-actions-standard');
             const btnVault = document.getElementById('lb-actions-vault');
             const btnDl = document.getElementById('lb-download-btn');
@@ -2280,11 +2269,22 @@
                 const typeMap = {
                     "Checkpoint": "checkpoints",
                     "LORA": "loras",
+                    "LoCon": "loras",
+                    "LyCORIS": "loras",
+                    "DoRA": "doras",
                     "TextualInversion": "embeddings",
+                    "Hypernetwork": "hypernetworks",
+                    "AestheticGradient": "aesthetic_gradients",
                     "Controlnet": "controlnet",
-                    "VAE": "vaes",
                     "Upscaler": "upscaler",
-                    "MotionModule": "motion"
+                    "MotionModule": "motion",
+                    "VAE": "vaes",
+                    "Poses": "poses",
+                    "Wildcards": "wildcards",
+                    "Workflows": "workflows",
+                    "Detection": "detection",
+                    "Other": "misc",
+                    "Text Encoder": "clip"
                 };
                 tier = typeMap[m.type] || "misc";
             }
@@ -2422,8 +2422,8 @@
                 const isSearchRes = (m.model !== undefined && m.score !== undefined);
                 const item = isSearchRes ? m.model : m;
                 
-                const fallbackImg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 100 100"><rect fill="%231e293b" width="100" height="100"/><text fill="%2394a3b8" x="50" y="50" font-family="sans-serif" font-size="10" text-anchor="middle" dominant-baseline="middle">No Preview</text></svg>`;
-                const imgSrc = item.thumbnail_path ? '/' + item.thumbnail_path.replace(/\\/g, '/') : fallbackImg;
+                const _noPreviewSvg = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect fill="#1e293b" width="100" height="100"/><text fill="#94a3b8" x="50" y="50" font-family="sans-serif" font-size="10" text-anchor="middle" dominant-baseline="middle">No Preview</text></svg>');
+                const imgSrc = (item.thumbnail_path && item.thumbnail_path.length > 0) ? '/' + item.thumbnail_path.replace(/\\/g, '/') : _noPreviewSvg;
                 const displayName = item.metadata?.model?.name || item.filename;
                 const isFlux = (item.metadata?.baseModel && item.metadata.baseModel.includes("Flux"));
                 // Compile tags for dataset attribute
@@ -2431,12 +2431,21 @@
                 
                 let clickStr = '';
                 if(item.metadata && item.metadata.modelId) {
+                    // Ensure metadata has images/files arrays even if empty
+                    if(!item.metadata.images) item.metadata.images = [];
+                    if(!item.metadata.files) item.metadata.files = [];
+                    
+                    // If metadata has no images but we have a local thumbnail, inject it
+                    if(item.metadata.images.length === 0 && item.thumbnail_path) {
+                        item.metadata.images = [{ url: '/' + item.thumbnail_path.replace(/\\/g, '/'), type: 'image', meta: {} }];
+                    }
+                    
                     const fakeParent = {
                         id: item.metadata.modelId,
                         name: item.metadata.model ? item.metadata.model.name : item.filename,
                         type: item.metadata.model ? item.metadata.model.type : "Unknown",
                         creator: { username: "Local Vault" },
-                        tags: [],
+                        tags: item.tags || [],
                         modelVersions: [ item.metadata ]
                     };
                     activeModels[fakeParent.id] = fakeParent;
@@ -2447,7 +2456,7 @@
                 grid.innerHTML += `
                     <div class="card" data-category="${item.vault_category}" data-tags="${tagsList}" data-name="${displayName.toLowerCase()}" ${clickStr}>
                         <div class="card-img-container" style="padding-top:100%;">
-                            <img class="card-img" src="${imgSrc}" onerror="this.src='${fallbackImg}'">
+                            <img class="card-img" src="${imgSrc}" onerror="this.onerror=null;this.src='${_noPreviewSvg}'">
                             <div style="position:absolute; top:10px; right:10px; display:flex; gap:5px; z-index:2; flex-wrap:wrap;">
                                 ${item.update_available === 1 ? '<span class="badge" style="background:#10b981; color:#fff; border:none; font-weight:bold; padding:4px 8px; font-size:0.75rem;">🔄 UPDATE</span>' : ''}
                                 ${isFlux ? '<span class="badge" style="background:#fbbf24; color:#000; border:none; font-weight:bold; padding:4px 8px; font-size:0.75rem;">FLUX</span>' : ''}
@@ -2975,12 +2984,12 @@
                 
                 // Only autostart once — guard prevents repeated launches on tab switching
                 if(!window.comfyLaunching) {
-                    launchComfyUI();
+                    launchActiveEngine();
                 }
             }
             
             // Populate Models natively from vault
-            fetch('/api/models').then(r => r.json()).then(data => {
+            fetch('/api/models?limit=5000').then(r => r.json()).then(data => {
                 if(!data.models) return;
                 
                 const ddw = document.getElementById('inf-model');
@@ -3050,11 +3059,18 @@
                 encoderModels.forEach(m => {
                     const f = m.filename.toLowerCase();
                     const label = m.metadata?.model?.name ? `${m.metadata.model.name} (${m.filename})` : m.filename;
-                    // Offer every encoder file in BOTH dropdowns so user has full flexibility
-                    const optC = new Option(label, m.filename);
-                    const optT = new Option(label, m.filename);
-                    clipL.appendChild(optC);
-                    t5sel.appendChild(optT);
+                    const isClip = f.includes('clip') && !f.includes('t5');
+                    const isT5 = f.includes('t5');
+                    
+                    // BUG-10 fix: Only add CLIP models to CLIP dropdown and T5 models to T5 dropdown
+                    if(isClip || (!isClip && !isT5)) {
+                        const optC = new Option(label, m.filename);
+                        clipL.appendChild(optC);
+                    }
+                    if(isT5 || (!isClip && !isT5)) {
+                        const optT = new Option(label, m.filename);
+                        t5sel.appendChild(optT);
+                    }
                     // Auto-preselect by common naming conventions
                     if((f.includes('clip_l') || f.includes('clip-l')) && !f.includes('t5')) clipL.value = m.filename;
                     if(f.includes('t5') || f.includes('t5xxl') || f.includes('t5-xxl')) t5sel.value = m.filename;
@@ -3115,7 +3131,7 @@
                     html += `
                         <div class="dl-status-item">
                             <div class="dl-status-header">
-                                <strong style="color: #fff;">${job.model_name || 'Unknown Model'}</strong>
+                                <strong style="color: #fff;">${job.model_name || job.filename || 'Unknown Model'}</strong>
                                 <span style="color: ${statusColor}; font-size: 0.8rem; font-weight: 600;">${(job.status || 'unknown').toUpperCase()}${retryBtn}</span>
                             </div>
                             <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">${job.filename || ''}</div>
@@ -3173,14 +3189,23 @@
             modal.style.display = modal.style.display === 'none' ? 'flex' : 'none';
             if(modal.style.display === 'flex') {
                 document.getElementById('settings-api-key').value = localStorage.getItem('civitai_api_key') || '';
+                document.getElementById('settings-hf-api-key').value = localStorage.getItem('hf_api_key') || '';
             }
         }
 
-        function saveSettings() {
-            const key = document.getElementById('settings-api-key').value;
-            localStorage.setItem('civitai_api_key', key);
+        function saveExplorerApiKeys() {
+            const civitKey = document.getElementById('settings-api-key').value;
+            const hfKey = document.getElementById('settings-hf-api-key').value;
+            localStorage.setItem('civitai_api_key', civitKey);
+            localStorage.setItem('hf_api_key', hfKey);
+            // Also persist HF key to server settings.json
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ hf_api_key: hfKey, civitai_api_key: civitKey })
+            }).catch(() => {});
             toggleSettings();
-            loadExplorer(); // Refresh explorer if key changed
+            loadExplorer();
         }
 
         async function retryDownload(jobId) {
@@ -3246,7 +3271,9 @@
                         }
                     } catch(e) {
                         retries++;
-                        if(retries > 30) {
+                        // BUG-7 fix: Show retry progress and increase timeout to 60s
+                        btn.innerText = `Connecting... (${retries}s)`;
+                        if(retries > 60) {
                             clearInterval(poll);
                             btn.innerText = "Launch Timeout";
                             btn.style.color = "#ef4444";
@@ -3260,292 +3287,83 @@
             }
         }
 
-        async function executeA1111Inference() {
+        async function executeInference() {
+            const engine = document.getElementById('inf-engine').value;
+            let endpoint = `/api/${engine}_proxy`;
+            
             const btn = document.getElementById('inf-generate-btn');
             const txt = document.getElementById('inf-generate-text');
             const fill = document.getElementById('inf-progress-fill');
             
-            const rawSampler = document.getElementById('inf-sampler').value;
-            let samplerMap = {
-                'euler_ancestral': 'Euler a', 'euler': 'Euler',
-                'dpmpp_2m': 'DPM++ 2M', 'dpmpp_2m_sde': 'DPM++ 2M SDE',
-                'dpmpp_sde': 'DPM++ SDE', 'karras': 'Euler a'
-            };
-            const mappedSampler = samplerMap[rawSampler] || 'Euler a';
-
-            let finalPrompt = document.getElementById('inf-prompt').value;
-            
-            // 1. Parse LoRAs
-            const loraRows = document.querySelectorAll('#inf-lora-container > div');
-            loraRows.forEach(row => {
-               const lName = row.querySelector('.lora-select').value;
-               const lWeight = parseFloat(row.querySelector('.lora-weight').value);
-               if(lName && lName !== 'none') {
-                   finalPrompt += ` <lora:${lName}:${lWeight}>`;
-               }
-            });
-
+            // Build Universal Payload
             const payload = {
-                prompt: finalPrompt,
+                engine: engine,
+                model_type: document.getElementById('inf-model-type').value,
+                prompt: document.getElementById('inf-prompt').value,
                 negative_prompt: document.getElementById('inf-negative').value,
+                seed: parseInt(document.getElementById('inf-seed').value),
                 steps: parseInt(document.getElementById('inf-steps').value),
                 cfg_scale: parseFloat(document.getElementById('inf-cfg').value),
                 width: parseInt(document.getElementById('inf-width').value),
                 height: parseInt(document.getElementById('inf-height').value),
-                seed: parseInt(document.getElementById('inf-seed').value),
-                sampler_name: mappedSampler,
+                sampler_name: document.getElementById('inf-sampler').value,
+                scheduler: document.getElementById('inf-scheduler').value,
                 override_settings: {
-                    "sd_model_checkpoint": document.getElementById('inf-model').value
-                }
+                    sd_model_checkpoint: document.getElementById('inf-model').value
+                },
+                vae: document.getElementById('inf-vae').value,
+                refiner: document.getElementById('inf-refiner').value,
+                refiner_steps: parseInt(document.getElementById('inf-refiner-steps').value)
             };
-            
-            // 2. Img2Img detection
-            let isImg2Img = false;
-            let targetEndpoint = "/sdapi/v1/txt2img";
-            
-            if(window.comfyUploadedImg2Img) {
-                isImg2Img = true;
-                targetEndpoint = "/sdapi/v1/img2img";
-                // A1111 expects base64 strings in init_images array
-                payload.init_images = [window.comfyUploadedImg2Img];
-                payload.denoising_strength = parseFloat(document.getElementById('inf-img2img-denoise').value);
-            }
-            
-            // 3. ControlNet detection
-            const cnEnable = document.getElementById('inf-cn-enable')?.checked;
-            if(cnEnable && window.comfyUploadedCn) {
-                const cnModel = document.getElementById('inf-cn-model').value;
-                const cnStrength = parseFloat(document.getElementById('inf-cn-strength').value);
-                
-                payload.alwayson_scripts = payload.alwayson_scripts || {};
-                payload.alwayson_scripts.controlnet = {
-                    "args": [
-                        {
-                            "input_image": window.comfyUploadedCn,
-                            "module": "none",
-                            "model": cnModel,
-                            "weight": cnStrength,
-                            "resize_mode": 1
-                        }
-                    ]
-                };
-            }
-            
-            // High-Res Fix (Only apply if NOT in Img2Img mode)
-            if(!isImg2Img && document.getElementById('inf-hires-enable')?.checked) {
-                payload.enable_hr = true;
-                payload.hr_scale = parseFloat(document.getElementById('inf-hires-factor').value);
-                const upscaler = document.getElementById('inf-hires-upscaler').value;
-                payload.hr_upscaler = upscaler.includes('latent') ? 'Latent' : upscaler;
-                payload.hr_second_pass_steps = parseInt(document.getElementById('inf-hires-steps').value);
-                payload.denoising_strength = parseFloat(document.getElementById('inf-hires-denoise').value);
+
+            // Flux specific parameters
+            if(payload.model_type.includes('flux')) {
+                payload.flux_unet = document.getElementById('inf-flux-unet')?.value;
+                payload.flux_clip_l = document.getElementById('inf-flux-clip-l')?.value;
+                payload.flux_t5xxl = document.getElementById('inf-flux-t5xxl')?.value;
+                payload.flux_guidance = parseFloat(document.getElementById('inf-flux-guidance')?.value || 3.5);
             }
 
-            btn.disabled = true;
-            txt.innerText = "Generating (A1111)...";
-            fill.style.width = '50%';
-
-            try {
-                const res = await fetch('/api/a1111_proxy', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ endpoint: targetEndpoint, payload: payload })
-                });
-                const data = await res.json();
-                if(data.error) throw new Error(data.error);
-                
-                if(data.images && data.images.length > 0) {
-                    const b64 = "data:image/png;base64," + data.images[0];
-                    const canvasImg = document.getElementById('inf-canvas-img');
-                    canvasImg.src = b64;
-                    canvasImg.style.display = 'block';
-                    document.getElementById('inf-canvas-empty').style.display = 'none';
-                    
-                    addToGallery(b64, payload);
-                }
-            } catch(e) {
-                alert("A1111 Generation Failed: " + e.message);
-            } finally {
-                btn.disabled = false;
-                txt.innerText = "Generate Image";
-                fill.style.width = '0%';
-            }
-        }
-
-        async function executeFooocusInference() {
-            // Simplified Fooocus API mock (similar to A1111)
-            const btn = document.getElementById('inf-generate-btn');
-            const txt = document.getElementById('inf-generate-text');
-            const payload = {
-                prompt: document.getElementById('inf-prompt').value,
-                negative_prompt: document.getElementById('inf-negative').value,
-                style_selections: ["Fooocus V2", "Fooocus Enhance", "Fooocus Sharp"],
-                performance_selection: "Quality"
-            };
-            btn.disabled = true;
-            txt.innerText = "Generating (Fooocus)...";
-            try {
-                const res = await fetch('/api/fooocus_proxy', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ payload })
-                });
-                const data = await res.json();
-                if(data.image) {
-                    const canvasImg = document.getElementById('inf-canvas-img');
-                    canvasImg.src = data.image.url || "data:image/png;base64," + data.image.base64;
-                    canvasImg.style.display = 'block';
-                    document.getElementById('inf-canvas-empty').style.display = 'none';
-                    addToGallery(canvasImg.src, payload);
-                }
-            } catch(e) { alert("Fooocus Failed: " + e.message); }
-            btn.disabled = false;
-            txt.innerText = "Generate Image";
-        }
-        async function executeInference() {
-            const engine = document.getElementById('inf-engine').value;
-            if(engine === 'a1111') return executeA1111Inference();
-            if(engine === 'fooocus') return executeFooocusInference();
-
-            const _mt=document.getElementById('inf-model-type').value;
-            if(_mt==='flux-dev'||_mt==='flux-schnell') return executeFluxInference();
-            const ckpt_name = document.getElementById('inf-model').value;
-            const refiner_name = document.getElementById('inf-refiner').value;
-            const vae_name = document.getElementById('inf-vae').value;
-            const prompt = document.getElementById('inf-prompt').value;
-            const negative = document.getElementById('inf-negative').value;
-            const seed = parseInt(document.getElementById('inf-seed').value);
-            const actualSeed = seed === -1 ? Math.floor(Math.random() * 1e15) : seed;
-            const steps = parseInt(document.getElementById('inf-steps').value);
-            const refiner_steps = parseInt(document.getElementById('inf-refiner-steps').value);
-            const cfg = parseFloat(document.getElementById('inf-cfg').value);
-            const sampler_name = document.getElementById('inf-sampler').value;
-            const scheduler = document.getElementById('inf-scheduler').value;
-            const width = parseInt(document.getElementById('inf-width').value);
-            const height = parseInt(document.getElementById('inf-height').value);
-            
-            if(!ckpt_name) return alert("Select a Checkpoint model first!");
-
-            let currentModelSource = [ "4", 0 ];
-            let currentClipSource = [ "4", 1 ];
-            let currentVaeSource = [ "4", 2 ];
-            
-            const workflow = {
-              "4": { "inputs": { "ckpt_name": ckpt_name }, "class_type": "CheckpointLoaderSimple" },
-              "5": { "inputs": { "width": width, "height": height, "batch_size": 1 }, "class_type": "EmptyLatentImage" }
-            };
-            
-            if(vae_name && vae_name !== 'none') {
-                workflow["100"] = { "inputs": { "vae_name": vae_name }, "class_type": "VAELoader" };
-                currentVaeSource = [ "100", 0 ];
-            }
-            
             // LoRAs
-            const loraRows = document.querySelectorAll('#inf-lora-container > div');
-            let loraIndex = 110;
-            loraRows.forEach(row => {
-               const lName = row.querySelector('.lora-select').value;
-               const lWeight = parseFloat(row.querySelector('.lora-weight').value);
-               workflow[loraIndex.toString()] = {
-                   "inputs": { "lora_name": lName, "strength_model": lWeight, "strength_clip": lWeight, "model": currentModelSource, "clip": currentClipSource },
-                   "class_type": "LoraLoader"
-               };
-               currentModelSource = [loraIndex.toString(), 0];
-               currentClipSource = [loraIndex.toString(), 1];
-               loraIndex++;
+            payload.loras = [];
+            document.querySelectorAll('#inf-lora-container > div').forEach(row => {
+                const lName = row.querySelector('.lora-select').value;
+                const lWeight = parseFloat(row.querySelector('.lora-weight').value);
+                if(lName && lName !== 'none') {
+                    payload.loras.push({ name: lName, weight: lWeight });
+                }
             });
-            
-            workflow["6"] = { "inputs": { "text": prompt, "clip": currentClipSource }, "class_type": "CLIPTextEncode" };
-            workflow["7"] = { "inputs": { "text": negative, "clip": currentClipSource }, "class_type": "CLIPTextEncode" };
-            
-            let posCond = [ "6", 0 ];
-            let negCond = [ "7", 0 ];
-            let finalLatentSource = [ "5", 0 ];
-            let denoiseParam = 1.0;
 
             // Img2Img
             if(window.comfyUploadedImg2Img) {
-                denoiseParam = parseFloat(document.getElementById('inf-img2img-denoise').value);
-                workflow["1001"] = { "inputs": { "image": window.comfyUploadedImg2Img }, "class_type": "LoadImage" };
-                workflow["1002"] = { "inputs": { "pixels": [ "1001", 0 ], "vae": currentVaeSource }, "class_type": "VAEEncode" };
-                finalLatentSource = [ "1002", 0 ];
+                payload.init_image_name = window.comfyUploadedImg2Img;
+                payload.init_image_b64 = window.comfyUploadedImg2ImgB64;
+                payload.denoising_strength = parseFloat(document.getElementById('inf-img2img-denoise').value);
+            }
+
+            // Hires Fix
+            const doHires = document.getElementById('inf-hires-enable').checked;
+            if(doHires && !payload.init_image_name) {
+                payload.hires = {
+                    enable: true,
+                    factor: parseFloat(document.getElementById('inf-hires-factor').value),
+                    denoise: parseFloat(document.getElementById('inf-hires-denoise').value),
+                    steps: parseInt(document.getElementById('inf-hires-steps').value),
+                    upscaler: document.getElementById('inf-hires-upscaler').value
+                };
             }
 
             // ControlNet
-            const cnEnable = document.getElementById('inf-cn-enable').checked;
-            const cnModel = document.getElementById('inf-cn-model').value;
-            if(cnEnable && cnModel && window.comfyUploadedCn) {
-                const cnStrength = parseFloat(document.getElementById('inf-cn-strength').value);
-                workflow["1003"] = { "inputs": { "control_net_name": cnModel }, "class_type": "ControlNetLoader" };
-                workflow["1004"] = { "inputs": { "image": window.comfyUploadedCn }, "class_type": "LoadImage" };
-                workflow["1005"] = {
-                    "inputs": { "strength": cnStrength, "positive": posCond, "negative": negCond, "control_net": [ "1003", 0 ], "image": [ "1004", 0 ] },
-                    "class_type": "ControlNetApplyAdvanced"
+            const cnEnable = document.getElementById('inf-cn-enable')?.checked;
+            if(cnEnable && window.comfyUploadedCn) {
+                payload.controlnet = {
+                    enable: true,
+                    model: document.getElementById('inf-cn-model').value,
+                    strength: parseFloat(document.getElementById('inf-cn-strength').value),
+                    image: window.comfyUploadedCn,
+                    image_b64: window.comfyUploadedCnB64
                 };
-                posCond = [ "1005", 0 ];
-                negCond = [ "1005", 1 ];
             }
-
-            // Base Sampler Logic
-            let use_refiner = (refiner_name && refiner_name !== 'none');
-            
-            if(use_refiner) {
-                workflow["3"] = {
-                    "inputs": { "add_noise": "enable", "noise_seed": actualSeed, "steps": steps + refiner_steps, "cfg": cfg, "sampler_name": sampler_name, "scheduler": scheduler, "start_at_step": 0, "end_at_step": steps, "return_with_leftover_noise": "enable", "model": currentModelSource, "positive": posCond, "negative": negCond, "latent_image": finalLatentSource },
-                    "class_type": "KSamplerAdvanced"
-                };
-                workflow["202"] = { "inputs": { "ckpt_name": refiner_name }, "class_type": "CheckpointLoaderSimple" };
-                workflow["203"] = { "inputs": { "text": prompt, "clip": [ "202", 1 ] }, "class_type": "CLIPTextEncode" };
-                workflow["204"] = { "inputs": { "text": negative, "clip": [ "202", 1 ] }, "class_type": "CLIPTextEncode" };
-                workflow["205"] = {
-                    "inputs": { "add_noise": "disable", "noise_seed": actualSeed, "steps": steps + refiner_steps, "cfg": cfg, "sampler_name": sampler_name, "scheduler": scheduler, "start_at_step": steps, "end_at_step": 10000, "return_with_leftover_noise": "disable", "model": [ "202", 0 ], "positive": [ "203", 0 ], "negative": [ "204", 0 ], "latent_image": [ "3", 0 ] },
-                    "class_type": "KSamplerAdvanced"
-                };
-                finalLatentSource = [ "205", 0 ];
-            } else {
-                workflow["3"] = {
-                    "inputs": { "seed": actualSeed, "steps": steps, "cfg": cfg, "sampler_name": sampler_name, "scheduler": scheduler, "denoise": denoiseParam, "model": currentModelSource, "positive": posCond, "negative": negCond, "latent_image": finalLatentSource },
-                    "class_type": "KSampler"
-                };
-                finalLatentSource = [ "3", 0 ];
-            }
-
-            // High-Res Fix
-            const doHires = document.getElementById('inf-hires-enable').checked;
-            if(doHires) {
-                const hFactor = parseFloat(document.getElementById('inf-hires-factor').value);
-                const hDenoise = parseFloat(document.getElementById('inf-hires-denoise').value);
-                const hSteps = parseInt(document.getElementById('inf-hires-steps').value);
-                const hUpscaler = document.getElementById('inf-hires-upscaler').value;
-                const upParams = getHiresUpscalerParams(hUpscaler);
-                let upscaledLatentSource;
-                
-                if(upParams.type === 'latent') {
-                    workflow["300"] = { "inputs": { "upscale_method": upParams.method, "scale_by": hFactor, "samples": finalLatentSource }, "class_type": "LatentUpscaleBy" };
-                    upscaledLatentSource = [ "300", 0 ];
-                } else {
-                    // ESRGAN/SwinIR: decode → upscale image → re-encode
-                    workflow["301"] = { "inputs": { "samples": finalLatentSource, "vae": currentVaeSource }, "class_type": "VAEDecode" };
-                    workflow["302"] = { "inputs": { "upscale_method": "bicubic", "scale_by": hFactor, "image": [ "301", 0 ] }, "class_type": "ImageScaleBy" };
-                    workflow["303"] = { "inputs": { "pixels": [ "302", 0 ], "vae": currentVaeSource }, "class_type": "VAEEncode" };
-                    upscaledLatentSource = [ "303", 0 ];
-                }
-                workflow["305"] = {
-                    "inputs": { "seed": actualSeed + 1, "steps": hSteps, "cfg": cfg, "sampler_name": sampler_name, "scheduler": scheduler, "denoise": hDenoise, "model": currentModelSource, "positive": posCond, "negative": negCond, "latent_image": upscaledLatentSource },
-                    "class_type": "KSampler"
-                };
-                finalLatentSource = [ "305", 0 ];
-            }
-            
-            // Output Decode
-            workflow["8"] = { "inputs": { "samples": finalLatentSource, "vae": currentVaeSource }, "class_type": "VAEDecode" };
-            workflow["9"] = { "inputs": { "filename_prefix": "AIManager", "images": [ "8", 0 ] }, "class_type": "SaveImage" };
-            
-            const payload = { prompt: workflow };
-            
-            const btn = document.getElementById('inf-generate-btn');
-            const txt = document.getElementById('inf-generate-text');
-            const fill = document.getElementById('inf-progress-fill');
             
             fill.style.width = '0%';
             btn.disabled = true;
@@ -3555,62 +3373,103 @@
             document.getElementById('inf-canvas-empty').innerText = "Waking Engine...";
 
             try {                
-                const res = await fetch('/api/comfy_proxy', {
+                const res = await fetch(endpoint, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({endpoint: '/prompt', payload: payload})
+                    body: JSON.stringify({endpoint: '/api/generate', payload: payload})
                 });
                 const data = await res.json();
-                if(data.error) throw new Error(data.error.message || "Unknown ComfyUI Error");
-                
-                window.currentPromptId = data.prompt_id;
-                
-                // Fallback Polling Engine (In case WebSockets are hard-blocked by browser)
-                if(window.comfyPollInterval) clearInterval(window.comfyPollInterval);
-                document.getElementById('inf-generate-text').innerText = "Processing Canvas...";
-                
-                window.comfyPollInterval = setInterval(async () => {
-                    try {
-                        const histRes = await fetch('/api/comfy_proxy', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({endpoint: `/history/${window.currentPromptId}`})
-                        });
-                        const histData = await histRes.json();
-                        
-                        if(histData[window.currentPromptId]) {
-                            // Execution completed successfully!
-                            clearInterval(window.comfyPollInterval);
-                            const outputs = histData[window.currentPromptId].outputs;
+                if(data.error) throw new Error(data.error);
+
+                if(engine === 'comfyui') {
+                    window.currentPromptId = data.prompt_id;
+                    
+                    if(window.comfyPollInterval) clearInterval(window.comfyPollInterval);
+                    if(window.comfyProgressInterval) clearInterval(window.comfyProgressInterval);
+                    
+                    const genStartTime = Date.now();
+                    fill.style.width = '5%';
+                    fill.classList.add('progress-pulsing');
+                    txt.innerText = "Processing...";
+                    document.getElementById('inf-canvas-empty').innerText = "Generating your image...";
+                    
+                    window.comfyProgressInterval = setInterval(() => {
+                        const elapsed = Math.floor((Date.now() - genStartTime) / 1000);
+                        const currentWidth = parseFloat(fill.style.width) || 5;
+                        if(currentWidth < 90) fill.style.width = Math.min(currentWidth + 1.5, 90) + '%';
+                        txt.innerText = `Processing... (${elapsed}s)`;
+                    }, 1200);
+                    
+                    window.comfyPollInterval = setInterval(async () => {
+                        try {
+                            const histRes = await fetch('/api/comfy_proxy', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({endpoint: `/history/${window.currentPromptId}`})
+                            });
+                            const histData = await histRes.json();
                             
-                            for(const nodeId in outputs) {
-                                if(outputs[nodeId].images && outputs[nodeId].images.length > 0) {
-                                    const imgData = outputs[nodeId].images[0];
-                                    const imgUrl = `/api/comfy_image?filename=${imgData.filename}&subfolder=${imgData.subfolder}&type=${imgData.type}&t=${Date.now()}`;
-                                    
-                                    const canvasImg = document.getElementById('inf-canvas-img');
-                                    canvasImg.src = imgUrl;
-                                    canvasImg.style.display = 'block';
-                                    document.getElementById('inf-canvas-empty').style.display = 'none';
-                                    
-                                    addToGallery(imgUrl, workflow);
-                                    
-                                    document.getElementById('inf-generate-btn').disabled = false;
-                                    document.getElementById('inf-generate-text').innerText = "Generate Image";
-                                    document.getElementById('inf-progress-fill').style.width = '0%';
-                                    break;
+                            if(histData[window.currentPromptId]) {
+                                clearInterval(window.comfyPollInterval);
+                                clearInterval(window.comfyProgressInterval);
+                                const outputs = histData[window.currentPromptId].outputs;
+                                
+                                for(const nodeId in outputs) {
+                                    if(outputs[nodeId].images && outputs[nodeId].images.length > 0) {
+                                        const imgData = outputs[nodeId].images[0];
+                                        const imgUrl = `/api/comfy_image?filename=${imgData.filename}&subfolder=${imgData.subfolder}&type=${imgData.type}&t=${Date.now()}`;
+                                        
+                                        const canvasImg = document.getElementById('inf-canvas-img');
+                                        canvasImg.src = imgUrl;
+                                        canvasImg.style.display = 'block';
+                                        document.getElementById('inf-canvas-empty').style.display = 'none';
+                                        
+                                        addToGallery(imgUrl, payload);
+                                        
+                                        btn.disabled = false;
+                                        txt.innerText = "Generate Image";
+                                        fill.style.width = '100%';
+                                        fill.classList.remove('progress-pulsing');
+                                        setTimeout(() => fill.style.width = '0%', 800);
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                    } catch(e) { }
-                }, 1500); // 1.5s background interval
+                        } catch(e) {}
+                    }, 1500);
 
+                } else if(engine === 'a1111' || engine === 'forge') {
+                    if(data.images && data.images.length > 0) {
+                        const b64 = "data:image/png;base64," + data.images[0];
+                        const canvasImg = document.getElementById('inf-canvas-img');
+                        canvasImg.src = b64;
+                        canvasImg.style.display = 'block';
+                        document.getElementById('inf-canvas-empty').style.display = 'none';
+                        addToGallery(b64, payload);
+                    }
+                    btn.disabled = false;
+                    txt.innerText = "Generate Image";
+                    fill.style.width = '0%';
+                } else if(engine === 'fooocus') {
+                    if(data.image) {
+                        const canvasImg = document.getElementById('inf-canvas-img');
+                        canvasImg.src = data.image.url || "data:image/png;base64," + data.image.base64;
+                        canvasImg.style.display = 'block';
+                        document.getElementById('inf-canvas-empty').style.display = 'none';
+                        addToGallery(canvasImg.src, payload);
+                    }
+                    btn.disabled = false;
+                    txt.innerText = "Generate Image";
+                    fill.style.width = '0%';
+                }
             } catch(e) {
-                alert("Generation Failed: " + e.message + "\n\nIs ComfyUI running?");
+                alert("Generation Failed: " + e.message + `\n\nIs ${engine} running?`);
                 btn.disabled = false;
                 txt.innerText = "Generate Image";
                 fill.style.width = '0%';
+                fill.classList.remove('progress-pulsing');
                 if(window.comfyPollInterval) clearInterval(window.comfyPollInterval);
+                if(window.comfyProgressInterval) clearInterval(window.comfyProgressInterval);
                 document.getElementById('inf-canvas-empty').innerText = "No Output";
             }
         }
