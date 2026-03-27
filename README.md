@@ -133,6 +133,21 @@ See [`.agent/rules/data_safety.md`](.agent/rules/data_safety.md) for full detail
 
 ---
 
+## 🛡️ Quality Assurance (QA Guardian)
+
+This repository maintains rigorous cross-platform stability natively via the **QA Guardian** testing pipeline. We deploy zero-dependency Python unit frameworks, isolated Playwright headless UI testing, and aggressive proxy payload translations.
+
+To run the full matrix suite locally:
+```bash
+pip install -r requirements-qa.txt
+playwright install chromium
+python -m pytest .tests/ -v --cov=.backend/
+```
+
+We proudly enforce comprehensive CI/CD Cloud automation natively via **GitHub Actions** across Windows, macOS, and Ubuntu. All Playwright failures automatically preserve `.mp4` video traces directly to the repository artifacts for forensic debugging.
+
+---
+
 ## 📝 License
 
 This project is under active development.
