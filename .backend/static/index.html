@@ -895,6 +895,7 @@
                 <input type="text" id="ex-search" placeholder="Search models, tags..." style="flex: 1;" onchange="loadExplorer()">
                 
                 <select id="ex-sort" onchange="loadExplorer()">
+                    <option value="Search Match">Search Match</option>
                     <option value="Highest Rated">Highest Rated</option>
                     <option value="Most Downloaded">Most Downloaded</option>
                     <option value="Newest">Newest</option>
@@ -2641,7 +2642,9 @@
                 url.searchParams.append('limit', '40');
                 let apiSort = sort;
                 if (sort === 'Size High' || sort === 'Size Low') apiSort = 'Highest Rated';
-                url.searchParams.append('sort', apiSort);
+                if (apiSort !== 'Search Match') {
+                    url.searchParams.append('sort', apiSort);
+                }
                 url.searchParams.append('nsfw', nsfw);
                 if(early === 'true') url.searchParams.append('earlyAccess', 'true');
                 if(q) url.searchParams.append('query', q);
@@ -2686,6 +2689,32 @@
                     const sizeB = (b.modelVersions && b.modelVersions[0] && b.modelVersions[0].files && b.modelVersions[0].files[0]) ? b.modelVersions[0].files[0].sizeKB || 0 : 0;
                     return sort === 'Size High' ? sizeB - sizeA : sizeA - sizeB;
                 });
+            } else if (sort === 'Search Match') {
+                const queryStr = (document.getElementById('ex-search').value || '').toLowerCase().trim();
+                if (queryStr) {
+                    const terms = queryStr.split(/\s+/);
+                    items.forEach(item => {
+                        let score = 0;
+                        const name = (item.name || '').toLowerCase();
+                        const desc = (item.description || '').toLowerCase();
+                        
+                        if (name === queryStr) score += 100;
+                        else if (name.includes(queryStr)) score += 50;
+                        
+                        terms.forEach(term => {
+                            if (name.includes(term)) score += 10;
+                            if (desc.includes(term)) score += 2;
+                            if (item.tags && Array.isArray(item.tags)) {
+                                item.tags.forEach(tag => {
+                                    const tagStr = (typeof tag === 'string' ? tag : (tag.name||'')).toLowerCase();
+                                    if (tagStr.includes(term)) score += 5;
+                                });
+                            }
+                        });
+                        item._searchScore = score;
+                    });
+                    items.sort((a, b) => (b._searchScore || 0) - (a._searchScore || 0));
+                }
             }
 
             const hideInstalled = document.getElementById('ex-installed').checked;

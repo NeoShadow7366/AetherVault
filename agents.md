@@ -281,6 +281,8 @@ Executes automated regression testing on save or commit, parses failures, and ap
 **Purpose**:  
 Acts as the proactive gatekeeper for software infrastructure and architectural integrity. Ensures that changes in one part of the monolithic application do not adversely affect other areas while strictly enforcing zero-dependency "Anti-Gravity" principles.
 
+> **Workflow Reference:** See [guardian_workflow.md](file:///g:/AG SM/.agents/visualizations/guardian_workflow.md) for the complete sequence diagram mapping how the Architecture Guardian orchestrates the API Librarian, QA Guardian, Safe Test Runner, and Health Doctor.
+
 **Key Responsibilities**:
 - Protection of zero-dependency rules and anti-gravity philosophy
 - Pre-change impact analysis and cross-boundary tracing (frontend → server.py → proxy_translators.py → subprocess sandboxes → Global_Vault/SQLite)
