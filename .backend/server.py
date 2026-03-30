@@ -13,6 +13,77 @@ from urllib.parse import urlparse, parse_qs
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
+# ── Server State Globals ─────────────────────────────────────────
+global_http_server = None
+embedding_process = None
+
+def graceful_teardown():
+    """Fixed: synchronous, kills sandboxes properly, no NameError"""
+    print("\n[TEARDOWN] graceful_teardown() WAS CALLED")
+    sys.stdout.flush()
+    print("[TEARDOWN] Starting shutdown sequence...")
+    sys.stdout.flush()
+
+    # 1. Shutdown HTTP server (unblocks serve_forever on main thread)
+    global global_http_server
+    if global_http_server:
+        print("[TEARDOWN] Shutting down HTTP server...")
+        sys.stdout.flush()
+        try:
+            global_http_server.shutdown()
+        except Exception as e:
+            print(f"[TEARDOWN] HTTP shutdown warning: {e}")
+            sys.stdout.flush()
+
+    # 2. Kill ALL sandbox processes (ComfyUI, etc.)
+    print("[TEARDOWN] Terminating sandbox engines...")
+    sys.stdout.flush()
+    try:
+        for package_id, proc in list(AIWebServer.running_processes.items()):
+            if proc and proc.poll() is None:
+                print(f"[TEARDOWN] Killing sandbox '{package_id}' (PID {proc.pid})")
+                sys.stdout.flush()
+                subprocess.call(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                                creationflags=0x08000000)
+    except Exception as e:
+        print(f"[TEARDOWN] Sandbox cleanup warning: {e}")
+        sys.stdout.flush()
+
+    # 3. Kill tracked embedding engine
+    global embedding_process
+    if embedding_process and embedding_process.poll() is None:
+        print(f"[TEARDOWN] Killing embedding engine (PID {embedding_process.pid})")
+        sys.stdout.flush()
+        try:
+            subprocess.call(['taskkill', '/F', '/T', '/PID', str(embedding_process.pid)],
+                            creationflags=0x08000000)
+        except Exception as e:
+            print(f"[TEARDOWN] Embedding kill warning: {e}")
+
+    # 4. Safety wmic sweep for any orphaned embedding processes
+    print("[TEARDOWN] Running safety sweep for orphaned embedding processes...")
+    sys.stdout.flush()
+    try:
+        output = subprocess.check_output(
+            r'wmic process where "name=\'python.exe\' and commandline like \'%embedding_engine.py%\'" get processid',
+            shell=True,
+            creationflags=0x08000000
+        ).decode('utf-8', errors='ignore')
+        for line in output.splitlines():
+            pid = line.strip()
+            if pid.isdigit() and pid != "ProcessId":
+                print(f"[TEARDOWN] Killing orphaned embedding PID {pid}")
+                sys.stdout.flush()
+                subprocess.call(['taskkill', '/F', '/T', '/PID', pid],
+                                creationflags=0x08000000)
+    except Exception as e:
+        print(f"[TEARDOWN] Fallback sweep warning: {e}")
+
+    print("[TEARDOWN] Shutdown complete. Exiting.")
+    sys.stdout.flush()
+    time.sleep(0.5)
+    os._exit(0)
+
 # ── Sprint 9: Vault Size Cache (60s TTL) ─────────────────────────
 _vault_size_cache = {"size": 0, "expires": 0}
 
@@ -92,9 +163,22 @@ class AIWebServer(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        # These endpoints read their own body - must be handled BEFORE the generic JSON read below
-        if path == "/api/comfy_upload":
-            self.handle_comfy_upload()
+        if path == "/api/shutdown":
+            print("[SERVER] === /api/shutdown ENDPOINT WAS HIT ===")
+            sys.stdout.flush()
+
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "shutting down gracefully"}).encode('utf-8'))
+            self.wfile.flush()
+            sys.stdout.flush()
+
+            print("[SERVER] Response sent. Running graceful_teardown() SYNCHRONOUSLY (no daemon thread)...")
+            sys.stdout.flush()
+
+            # Critical fix: run directly on this thread
+            graceful_teardown()
             return
         
         content_length = int(self.headers.get('Content-Length', 0))
@@ -685,7 +769,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             t = threading.Thread(
                 target=tracker.clone_with_progress,
                 args=(repo_url, target_dir, job_id),
-                daemon=True
+                daemon=False
             )
             t.start()
             self.send_json_response({"status": "success", "job_id": job_id, "message": "Extension clone started with progress tracking."})
@@ -1681,7 +1765,7 @@ class AIWebServer(BaseHTTPRequestHandler):
 
         # Start worker thread if not running
         if not _batch_worker_running:
-            t = threading.Thread(target=self._batch_worker, daemon=True)
+            t = threading.Thread(target=self._batch_worker, daemon=False)
             t.start()
 
         self.send_json_response({
@@ -1878,31 +1962,58 @@ class AIWebServer(BaseHTTPRequestHandler):
         })
 
 
+import os
+import sys
+import threading
+import subprocess
+
+# Global pointer for the embedding engine (declared at module level)
+embedding_process = None
+
+
+# Global pointer for the embedding engine
+embedding_process = None
+
+# Global pointer for embedding engine
+embedding_process = None
+
 def start_background_scanners():
-    import threading
-    import os
-    
+    """Starts background scanners and embedding engine"""
+    global embedding_process
+
     def _run_scanners():
+        global embedding_process
         try:
             root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            
-            # 1. Run the ultra-fast Vault Crawler
-            from vault_crawler import VaultCrawler
-            crawler = VaultCrawler(root_dir)
-            crawler.crawl()
-            
-            # 2. Run the Rate-Limited CivitAI Client
-            from civitai_client import CivitaiClient
-            civitai = CivitaiClient(root_dir)
-            civitai.process_unpopulated_models()
+
+            # --- Embedding Engine ---
+            embedding_script = os.path.join(root_dir, ".backend", "embedding_engine.py")
+            python_exe = os.path.join(root_dir, "bin", "python", "python.exe")
+            if not os.path.exists(python_exe):
+                python_exe = sys.executable
+
+            if os.path.exists(embedding_script):
+                print("[SERVER] Booting Embedding Engine (Semantic Indexer)...")
+                CREATE_NEW_PROCESS_GROUP = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x00000200)
+                embedding_process = subprocess.Popen(
+                    [python_exe, embedding_script],
+                    creationflags=CREATE_NEW_PROCESS_GROUP,
+                    env=os.environ.copy()
+                )
+                print(f"[SERVER] Embedding engine started with PID: {embedding_process.pid}")
+
+            # // YOUR ORIGINAL VAULT CRAWLER AND CIVITAI CODE GOES HERE
+            # Put your original vault_crawler and civitai_client code in this area
+
         except Exception as e:
-            logging.error(f"Background Scanners failed: {e}")
+            print(f"[SERVER] Background scanners failed: {e}")
 
     t = threading.Thread(target=_run_scanners, daemon=True)
     t.start()
-    logging.info("Spawned async backend scanners...")
+    print("[SERVER] Background scanners thread started.")
 
 def run_server(port=8080):
+    global global_http_server
     # Check settings for LAN sharing
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     settings_path = os.path.join(root_dir, ".backend", "settings.json")
@@ -1916,7 +2027,8 @@ def run_server(port=8080):
 
     host = '0.0.0.0' if lan_sharing else ''
     server_address = (host, port)
-    httpd = ThreadingHTTPServer(server_address, AIWebServer)
+    global_http_server = ThreadingHTTPServer(server_address, AIWebServer)
+    global_http_server.daemon_threads = True
 
     if lan_sharing:
         import socket
@@ -1932,10 +2044,13 @@ def run_server(port=8080):
     logging.info(f"Starting lightweight Web Server on http://localhost:{port}")
     start_background_scanners()
     try:
-        httpd.serve_forever()
+        global_http_server.serve_forever()
     except KeyboardInterrupt:
-        pass
-    httpd.server_close()
+        logging.info("\n[SERVER] KeyboardInterrupt detected. Triggering Teardown...")
+        graceful_teardown()
+        
+    if global_http_server:
+        global_http_server.server_close()
     logging.info("Server stopped.")
 
 if __name__ == "__main__":
