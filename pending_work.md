@@ -16,11 +16,11 @@ The core development cycle (Sprints 1–9) is finished. Sprint 9 added Inference
 - Video forensic tracing was added but needs validation on CI
 - **Remaining:** Monitor CI runs to confirm green across all 6 matrix jobs (3 OS × 2 Python versions)
 
-### Cross-Platform Verification
-- All code uses `os.name` / `platform.system()` branching but has only been tested on Windows
-- macOS (Intel + Apple Silicon) and Linux (x86_64 + arm64) need verification
-- Portable Python (`python-build-standalone`) binaries need platform-specific testing
-- **Action:** Boot the manager on macOS/Linux and verify symlink, process management, and venv creation
+### Cross-Platform Verification ✅ (Fixed 2026-03-30)
+- ~~All code uses `os.name` / `platform.system()` branching but has only been tested on Windows~~
+- ~~macOS (Intel + Apple Silicon) and Linux (x86_64 + arm64) need verification~~
+- Core `ValueError` bugs natively breaking Playwright and `pytest` CI pipelines dropped by stray `creationflags` and `wmic` usage on POSIX OSes have been patched. 
+- **Action:** Portable Python (`python-build-standalone`) binaries need platform-specific deployment testing.
 
 ### Performance Audit ✅ (Sprint 9)
 - ~~`handle_server_status()` now walks `Global_Vault/` on every call for vault size~~ — Fixed with 60-second TTL cache
@@ -61,10 +61,10 @@ The core development cycle (Sprints 1–9) is finished. Sprint 9 added Inference
 
 ## 🟢 Low Priority — Nice-to-Have
 
-### Theming System (Partially Complete ✅)
-- Settings theme dropdown now applies `data-theme` attribute to `<body>` on save and load
+### Theming System (Complete ✅)
+- Settings theme dropdown applies `data-theme` attribute to `<body>` on save and load
 - Dark, Light, and Glass themes have CSS variable definitions
-- **Remaining:** Add accent color customization
+- Accent color customization sets the `--primary` dynamically using `#10b981` default based on Logo
 
 ### Notifications
 - Web Push notifications for completed downloads/generations

@@ -1,10 +1,18 @@
 import os
 import zipfile
 import logging
+import subprocess
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 def create_release_build(root_dir: str):
+    logging.info("Compiling launcher executable...")
+    try:
+        subprocess.run(["pyinstaller", "Antigravity.spec", "--clean", "-y", "--distpath", "."], cwd=root_dir, check=True)
+    except Exception as e:
+        logging.error(f"Failed to compile launcher: {e}")
+        return
+
     dist_dir = os.path.join(root_dir, "dist")
     os.makedirs(dist_dir, exist_ok=True)
     
@@ -14,13 +22,16 @@ def create_release_build(root_dir: str):
     # Files and folders to strictly ignore when packaging
     ignore_dirs = {
         "bin", "packages", "dist", ".git", "__pycache__", "cache", ".gemini",
-        ".venv", ".pytest_cache", ".tests", "node_modules", ".github"
+        ".venv", ".pytest_cache", ".tests", "node_modules", ".github", "build",
+        ".agent", ".agents", "Workflows"
     }
     ignore_files = {
         "metadata.sqlite", "build.py", "AIManager_Release.zip",
         ".coverage", "test_results.txt", "merged_walkthroughs.md",
         "merged_walkthroughs.txt", "pending_work.md", "collect_docs.py",
-        "requirements-qa.txt"
+        "requirements-qa.txt", "start_manager.bat", "start_manager.sh",
+        "tray_launcher.py", "Antigravity.spec", "agents.md",
+        "session-summary.md", "README.md"
     }
     
     # We will explicitly add Global_Vault subdirectories manually as empty stubs
@@ -33,7 +44,18 @@ def create_release_build(root_dir: str):
             dirs[:] = [d for d in dirs if d not in ignore_dirs]
             
             for file in files:
-                if file in ignore_files or file.endswith(".pyc"):
+                if file in ignore_files or file.endswith(".pyc") or file.endswith(".log") or file.endswith(".bat") or file.endswith(".sh"):
+                    continue
+                
+                # Exclude test files, dev scripts, and repo metadata
+                if file.startswith("test_") or file.endswith("_test.py") or file.startswith("check_") or file in (
+                    "download_test_models.py", "launch_and_test.py", "restart_backend.py", "tools_dl.py",
+                    "fix_links.py", ".gitignore", ".gitmodules"
+                ):
+                    continue
+                
+                # Exclude any stale executables (like the old Antigravity.exe)
+                if file.endswith(".exe") and file != "Local AI Tool.exe":
                     continue
                     
                 file_path = os.path.join(root, file)

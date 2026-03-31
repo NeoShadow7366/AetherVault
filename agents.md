@@ -72,6 +72,7 @@ Generative AI Manager is a singular hub that automates Runtimes, APIs, Assets, a
 | 6 | **Offline-first** | The dashboard must boot and render instantly from local SQLite. Network calls (CivitAI, HuggingFace, OTA) are background-only and failure-tolerant. |
 | 7 | **Single-file frontend** | The UI is a monolithic `index.html` served by our Python HTTP server. No Node.js build step, no npm, no bundler. |
 | 8 | **Subprocess safety** | All spawned processes use `CREATE_NEW_PROCESS_GROUP` on Windows. PIDs are tracked. Orphan detection is mandatory. |
+| 9 | **Never Un-track Developer Architecture** | QA files (`.tests/`), GitHub pipelines (`.github/`), and Agent skills (`.agents/`) MUST remain tracked in Git to preserve CI/CD. Explicitly exclude them inside `build.py` instead of using `.gitignore` or `git rm`. |
 
 ### Success Metrics
 
@@ -84,6 +85,24 @@ Generative AI Manager is a singular hub that automates Runtimes, APIs, Assets, a
 ---
 
 ## Layer 2 — Orchestration Layer
+
+### Agent Hierarchy (Chain of Command)
+
+1. **Human User** – Final and absolute authority. Only the user can approve rule overrides, architectural changes, or accept Architectural Decision Records (ADRs).
+2. **Architecture Guardian (Monolith Sentinel)** – Ultimate technical authority on all structural matters. Has veto power over code structure, tool additions, library imports, system boundaries, and any changes that could impact zero-dependency or long-term maintainability. Overrules QA Guardian and all lower agents.
+3. **QA Guardian** – Authority over testing, functional correctness, bug fixes, and quality. Can implement fixes, but MUST yield immediately to the Architecture Guardian if a fix threatens architectural guidelines or zero-dependency principles.
+4. **Specialized Diagnostics (Health Doctor & API Librarian)** – Read-only advisory roles. They provide telemetry, insights, and recommendations but have no authority to dictate or implement architectural changes. They escalate observations upward.
+5. **Worker Agents / Skills (Installers, Crawlers, Routers, etc.)** – Pure execution layer. They have zero authority to create, modify, or override rules or guidelines. They execute tasks within the defined boundaries.
+
+#### Conflict Resolution Matrix
+
+| Conflict Type | Primary Deciding Authority | Escalation Path |
+| :--- | :--- | :--- |
+| Dependency, Structure, Tools | Architecture Guardian | → Human User |
+| Testing, Functional Correctness | QA Guardian | → Architecture Guardian → Human User |
+| Telemetry / Diagnostic Insights | Diagnostics (advisory only) | → Relevant Guardian |
+| New Rule or Memory Update | Human User only | N/A |
+| Any architectural drift risk | Architecture Guardian | → Human User |
 
 ### Reasoning Style: Chain-of-Thought with Red-Team Review
 

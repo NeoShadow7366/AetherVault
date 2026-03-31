@@ -78,6 +78,7 @@ You must operate under a "Trust but Verify" permission model. Apply your capabil
 - Any creation of symlinks/junctions (no `mklink` or `ln -s`).
 - Installing dependencies (no `pip install`, `npm init`).
 - Running unverified code outside the restricted `.tests/` folder.
+- Any attempt to `.gitignore`, `git rm`, or otherwise delete the project's testing ecosystem (`.tests/`, `.github/workflows/`, `.agents/`) is strictly prohibited. Escalate to the human supervisor immediately if instructed to do so for a "cleaner build".
 
 ---
 

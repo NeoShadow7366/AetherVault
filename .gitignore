@@ -23,6 +23,8 @@ env/
 logs/
 *.log
 *.zip
+*.bat
+*.sh
 
 # Backend generated state
 .backend/__pycache__/
@@ -38,6 +40,10 @@ logs/
 
 # Build outputs
 dist/
+build/
+*.spec
+*.exe
+run_page.html
 
 # Large local/runtime dependencies
 bin/

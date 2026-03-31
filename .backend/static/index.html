@@ -1089,6 +1089,14 @@
                     </div>
 
                     <div>
+                        <label class="section-title">Accent Color</label>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <input type="color" id="set-accent" value="#10b981" class="select-fancy" style="width:50px; height:40px; padding:2px; cursor:pointer;">
+                            <span style="color:var(--text-muted); font-size:0.9rem;">Choose a primary highlight color (default based on Logo).</span>
+                        </div>
+                    </div>
+
+                    <div>
                         <label class="section-title">Background Updater</label>
                         <select id="set-updates" class="select-fancy" style="width:100%;">
                             <option value="true">Enable Auto-Updates on Startup</option>
@@ -4780,6 +4788,11 @@
                 document.getElementById('set-hf-api-key').value = data.hf_api_key || '';
                 const themeEl = document.getElementById('set-theme');
                 if(themeEl && data.theme) { themeEl.value = data.theme; document.body.setAttribute('data-theme', data.theme); }
+                const accentEl = document.getElementById('set-accent');
+                if(accentEl && data.accent) {
+                    accentEl.value = data.accent;
+                    document.body.style.setProperty('--primary', data.accent);
+                }
                 const updEl = document.getElementById('set-updates');
                 if(updEl && data.auto_updates !== undefined) updEl.value = String(data.auto_updates);
                 // Sprint 7: LAN toggle
@@ -4797,6 +4810,7 @@
                 civitai_api_key: document.getElementById('set-api-key').value,
                 hf_api_key: document.getElementById('set-hf-api-key').value,
                 theme: document.getElementById('set-theme').value,
+                accent: document.getElementById('set-accent').value,
                 auto_updates: document.getElementById('set-updates').value === 'true',
                 lan_sharing: document.getElementById('set-lan-sharing').checked
             };
@@ -4812,6 +4826,7 @@
                     localStorage.setItem('hf_api_key', payload.hf_api_key);
                     // Apply theme to DOM immediately
                     if(payload.theme) document.body.setAttribute('data-theme', payload.theme);
+                    if(payload.accent) document.body.style.setProperty('--primary', payload.accent);
                     showSettingsToast('✅ Settings saved successfully.' + (payload.lan_sharing ? ' LAN changes apply on restart.' : ''));
                 } else {
                     showSettingsToast('❌ Failed to save: ' + (data.message || 'Unknown error'));

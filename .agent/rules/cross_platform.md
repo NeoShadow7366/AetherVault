@@ -110,3 +110,18 @@ def remove_readonly(func, path, _):
 shutil.rmtree(target_dir, onerror=remove_readonly)
 ```
 
+## 10. Windows-Specific APIs (wmic, ctypes.windll)
+
+```python
+# ❌ LETHAL ON POSIX — Do not blindly call ctypes.windll or wmic
+mutex = ctypes.windll.kernel32.CreateMutexW(...)
+subprocess.call("wmic process where...")
+
+# ✅ CORRECT — Wrap in os.name == 'nt' blocks and provide POSIX fallbacks
+if os.name == 'nt':
+    mutex = ctypes.windll.kernel32.CreateMutexW(...)
+    subprocess.call('wmic process where "name=\'python.exe\'" call terminate', shell=True)
+else:
+    # Posix fallback or graceful pass
+    subprocess.call(['pkill', '-f', 'python'])
+```

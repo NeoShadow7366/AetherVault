@@ -58,6 +58,13 @@ except sqlite3.OperationalError:
 | Clear downloads | ✅ Yes — via `/api/downloads/clear` | Removes `downloads.json` only |
 | Repair broken symlinks | ⚠️ Automatic | `os.unlink()` on broken links only |
 
+## Developer Ecosystem Protection
+
+Always clearly delineate between the **Git Worktree** (the repository) and the **Distribution Payload** (`AIManager_Release.zip`).
+- **Sacred Pipeline Objects**: `.github/`, `.tests/`, `check_*.py`, `.agent/`, `.agents/`.
+- **Rule**: NEVER use `git rm --cached` or append these files to `.gitignore` to satisfy a user's request for a "clean build" or "remove unnecessary files".
+- PyInstaller's `build.py` dynamically sweeps and excludes these objects from the compiled distribution automatically. Assure they remain strictly tracked in Git so the automated QA pipeline and Guardian architectures can function safely.
+
 ## OTA Update Protection
 
 The update pipeline in `updater.py` and `build.py` maintains an explicit ignore list. Any new user-data directory **MUST** be added to both:

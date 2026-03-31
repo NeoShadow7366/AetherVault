@@ -43,8 +43,11 @@ def graceful_teardown():
             if proc and proc.poll() is None:
                 print(f"[TEARDOWN] Killing sandbox '{package_id}' (PID {proc.pid})")
                 sys.stdout.flush()
-                subprocess.call(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
-                                creationflags=0x08000000)
+                if os.name == 'nt':
+                    subprocess.call(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                                    creationflags=0x08000000)
+                else:
+                    proc.kill()
     except Exception as e:
         print(f"[TEARDOWN] Sandbox cleanup warning: {e}")
         sys.stdout.flush()
@@ -55,8 +58,11 @@ def graceful_teardown():
         print(f"[TEARDOWN] Killing embedding engine (PID {embedding_process.pid})")
         sys.stdout.flush()
         try:
-            subprocess.call(['taskkill', '/F', '/T', '/PID', str(embedding_process.pid)],
-                            creationflags=0x08000000)
+            if os.name == 'nt':
+                subprocess.call(['taskkill', '/F', '/T', '/PID', str(embedding_process.pid)],
+                                creationflags=0x08000000)
+            else:
+                embedding_process.kill()
         except Exception as e:
             print(f"[TEARDOWN] Embedding kill warning: {e}")
 
@@ -64,18 +70,21 @@ def graceful_teardown():
     print("[TEARDOWN] Running safety sweep for orphaned embedding processes...")
     sys.stdout.flush()
     try:
-        output = subprocess.check_output(
-            r'wmic process where "name=\'python.exe\' and commandline like \'%embedding_engine.py%\'" get processid',
-            shell=True,
-            creationflags=0x08000000
-        ).decode('utf-8', errors='ignore')
-        for line in output.splitlines():
-            pid = line.strip()
-            if pid.isdigit() and pid != "ProcessId":
-                print(f"[TEARDOWN] Killing orphaned embedding PID {pid}")
-                sys.stdout.flush()
-                subprocess.call(['taskkill', '/F', '/T', '/PID', pid],
-                                creationflags=0x08000000)
+        if os.name == 'nt':
+            output = subprocess.check_output(
+                r'wmic process where "name=\'python.exe\' and commandline like \'%embedding_engine.py%\'" get processid',
+                shell=True,
+                creationflags=0x08000000
+            ).decode('utf-8', errors='ignore')
+            for line in output.splitlines():
+                pid = line.strip()
+                if pid.isdigit() and pid != "ProcessId":
+                    print(f"[TEARDOWN] Killing orphaned embedding PID {pid}")
+                    sys.stdout.flush()
+                    subprocess.call(['taskkill', '/F', '/T', '/PID', pid],
+                                    creationflags=0x08000000)
+        else:
+            subprocess.call(['pkill', '-f', 'embedding_engine.py'])
     except Exception as e:
         print(f"[TEARDOWN] Fallback sweep warning: {e}")
 
@@ -1994,11 +2003,16 @@ def start_background_scanners():
 
             if os.path.exists(embedding_script):
                 print("[SERVER] Booting Embedding Engine (Semantic Indexer)...")
-                CREATE_NEW_PROCESS_GROUP = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x00000200)
+                
+                popen_kwargs = {}
+                if os.name == 'nt':
+                    CREATE_NEW_PROCESS_GROUP = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x00000200)
+                    popen_kwargs['creationflags'] = CREATE_NEW_PROCESS_GROUP
+                    
                 embedding_process = subprocess.Popen(
                     [python_exe, embedding_script],
-                    creationflags=CREATE_NEW_PROCESS_GROUP,
-                    env=os.environ.copy()
+                    env=os.environ.copy(),
+                    **popen_kwargs
                 )
                 print(f"[SERVER] Embedding engine started with PID: {embedding_process.pid}")
 
