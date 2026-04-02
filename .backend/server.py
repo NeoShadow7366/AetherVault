@@ -101,6 +101,9 @@ _batch_queue = []  # list of {id, status, payload, result, error}
 _batch_lock = threading.Lock()
 _batch_worker_running = False
 
+# ── Phase 5: Civitai Search Cache ──────────────────────────────────
+_civitai_search_cache = {}  # dict of { cache_key: { "timestamp": float, "data": list } }
+
 class AIWebServer(BaseHTTPRequestHandler):
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(root_dir, ".backend", "metadata.sqlite")
@@ -259,6 +262,10 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.handle_delete_prompt(data)
         elif path == "/api/settings":
             self.handle_save_settings(data)
+        elif path == "/api/dashboard/clear_history":
+            self.handle_clear_dashboard_history(data)
+        elif path == "/api/import/external":
+            self.handle_import_external(data)
         elif path == "/api/system/update":
             self.handle_system_update(data)
         elif path == "/api/comfy_proxy":
@@ -282,8 +289,16 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_error(403, "Forbidden")
             return
             
+        # Serve root UI logo
+        if path == "/Logo.ico":
+            filepath = os.path.join(self.root_dir, "Logo.ico")
+        # Serve custom user icons
+        elif path.startswith("/icons/"):
+            import urllib.parse
+            clean_path = urllib.parse.unquote(path.lstrip("/"))
+            filepath = os.path.join(self.root_dir, clean_path)
         # Check if they are requesting a thumbnail
-        if path.startswith("/.backend/cache/thumbnails/"):
+        elif path.startswith("/.backend/cache/thumbnails/"):
             filepath = os.path.join(self.root_dir, path.lstrip("/"))
         else:
             filepath = os.path.join(self.static_dir, path.lstrip("/"))
@@ -305,6 +320,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         elif ext == "png": content_type = "image/png"
         elif ext == "json": content_type = "application/json"
         elif ext == "webp": content_type = "image/webp"
+        elif ext == "ico": content_type = "image/x-icon"
         
         try:
             with open(filepath, "rb") as f:
@@ -319,11 +335,23 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_civitai_search(self):
         try:
+            import time
             from urllib.parse import urlparse, parse_qs
             import urllib.request
             qs = parse_qs(urlparse(self.path).query)
             query = qs.get("query", [""])[0]
             type_filter = qs.get("type", [""])[0]
+            offset = int(qs.get("offset", ["0"])[0])
+            
+            # Cache Check (15 mins TTL)
+            cache_key = f"{query}_{type_filter}_{offset}"
+            global _civitai_search_cache
+            now = time.time()
+            if cache_key in _civitai_search_cache:
+                cached = _civitai_search_cache[cache_key]
+                if now - cached["timestamp"] < 900:
+                    self.send_json_response({"items": cached["data"]})
+                    return
             
             payload = {
                 "queries": [
@@ -331,7 +359,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                         "q": query,
                         "indexUid": "models_v9",
                         "limit": 40,
-                        "offset": 0
+                        "offset": offset
                     }
                 ]
             }
@@ -363,10 +391,14 @@ class AIWebServer(BaseHTTPRequestHandler):
                 mapped_imgs = []
                 for img in images:
                     img_id = img.get("url") or img.get("id")
-                    if img_id and not str(img_id).startswith("http"):
+                    if not img_id or str(img_id).lower() == "undefined":
+                        continue
+                        
+                    if not str(img_id).startswith("http"):
                         img_url = f"https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/{img_id}/width=450/image.jpeg"
                     else:
                         img_url = img_id
+                        
                     mapped_imgs.append({
                         "url": img_url,
                         "type": img.get("type", "image")
@@ -390,6 +422,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                 }
                 items.append(v1_item)
                 
+            _civitai_search_cache[cache_key] = {"timestamp": now, "data": items}
             self.send_json_response({"items": items})
         except Exception as e:
             logging.error(f"Target CivitAI proxy search failed: {e}")
@@ -415,11 +448,20 @@ class AIWebServer(BaseHTTPRequestHandler):
             # Fetch slice
             cursor.execute('SELECT * FROM models ORDER BY id DESC LIMIT ? OFFSET ?', (limit, offset))
             rows = cursor.fetchall()
-            conn.close()
             
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
-            db = MetadataDB(self.db_path)
+            # Optimization: Fetch all tags for this page in one bulk query
+            hash_to_tags = {}
+            if rows:
+                hashes = [r["file_hash"] for r in rows if r["file_hash"]]
+                if hashes:
+                    for i in range(0, len(hashes), 900):
+                        chunk = hashes[i:i+900]
+                        placeholders = ','.join('?' * len(chunk))
+                        cursor.execute(f'SELECT file_hash, tag FROM tags WHERE file_hash IN ({placeholders})', chunk)
+                        for h, tag in cursor.fetchall():
+                            hash_to_tags.setdefault(h, []).append(tag)
+            
+            conn.close()
             
             # Format rows
             models = []
@@ -432,8 +474,10 @@ class AIWebServer(BaseHTTPRequestHandler):
                         d["metadata"] = {}
                 else:
                     d["metadata"] = {}
-                del d["metadata_json"]
-                d["user_tags"] = db.get_user_tags(d["file_hash"])
+                if "metadata_json" in d:
+                    del d["metadata_json"]
+                    
+                d["user_tags"] = hash_to_tags.get(d["file_hash"], [])
                 models.append(d)
                 
             self.send_json_response({
@@ -463,6 +507,16 @@ class AIWebServer(BaseHTTPRequestHandler):
                                 pkg_info["name"] = manifest.get("name", d.capitalize())
                         except (json.JSONDecodeError, OSError) as e:
                             logging.warning(f"Failed to read manifest for {d}: {e}")
+                    
+                    # Add running status by evaluating process handle
+                    proc = AIWebServer.running_processes.get(d)
+                    if proc and proc.poll() is None:
+                        pkg_info["is_running"] = True
+                    else:
+                        pkg_info["is_running"] = False
+                        if proc:
+                            del AIWebServer.running_processes[d]
+
                     packages.append(pkg_info)
                     
         self.send_json_response({"status": "success", "packages": packages})
@@ -631,7 +685,15 @@ class AIWebServer(BaseHTTPRequestHandler):
         p = subprocess.Popen(full_command, cwd=app_path, stdout=log_file, stderr=subprocess.STDOUT, **kwargs)
         AIWebServer.running_processes[package_id] = p
         
-        self.send_json_response({"status": "success", "message": "Package starting..."})
+        ports = {
+            "comfyui": "8188",
+            "forge": "7860",
+            "a1111": "7860",
+            "fooocus": "8888"
+        }
+        url = f"http://127.0.0.1:{ports.get(package_id, '7860')}"
+        
+        self.send_json_response({"status": "success", "message": "Package starting...", "url": url})
 
     def handle_repair_dependency(self, data):
         package_id = data.get("package_id")
@@ -1126,7 +1188,16 @@ class AIWebServer(BaseHTTPRequestHandler):
                 rows = db.list_generations_by_tag(tag)
             else:
                 rows = db.list_generations(sort=sort)
-            self.send_json_response({"status": "success", "generations": rows})
+                
+            # Self-heal: Drop missing files seamlessly
+            valid_rows = []
+            for r in rows:
+                if os.path.exists(r.get("file_path", "")):
+                    valid_rows.append(r)
+                else:
+                    db.delete_generation(r.get("id"))
+            
+            self.send_json_response({"status": "success", "generations": valid_rows})
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
@@ -1385,27 +1456,52 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"error": str(e)}, 500)
 
-    def handle_stop(self):
-        import subprocess
-        import os
-        import json
+    def handle_clear_dashboard_history(self, data):
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = json.loads(self.rfile.read(content_length).decode('utf-8'))
-            package_id = post_data.get("package_id")
-            
-            if package_id in AIWebServer.running_processes:
-                p = AIWebServer.running_processes[package_id]
-                if os.name == 'nt':
-                    subprocess.call(['taskkill', '/F', '/T', '/PID', str(p.pid)])
-                else:
-                    p.terminate()
-                del AIWebServer.running_processes[package_id]
-                self.send_json_response({"status": "success"})
-            else:
-                self.send_json_response({"status": "not_running", "message": "Package algorithm not strictly mapped in server."})
+            # Clear downloads.json
+            downloads_file = os.path.join(self.root_dir, ".backend", "cache", "downloads.json")
+            if os.path.exists(downloads_file):
+                with open(downloads_file, 'w') as f:
+                    json.dump({}, f)
+            # Add cleared_at timestamp to settings to hide old generations visually
+            import time
+            settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
+            settings = {}
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r') as f:
+                    try: settings = json.load(f)
+                    except: pass
+            settings["activity_cleared_at"] = time.time()
+            with open(settings_path, 'w') as f:
+                json.dump(settings, f, indent=4)
+            self.send_json_response({"status": "success"})
         except Exception as e:
-            self.send_json_response({"error": str(e)}, 500)
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
+
+    def handle_import_external(self, data):
+        target_path = data.get("path")
+        if not target_path or not os.path.exists(target_path) or not os.path.isdir(target_path):
+            self.send_json_response({"status": "error", "message": "Invalid directory provided"}, 400)
+            return
+            
+        import math
+        try:
+            folder_name = os.path.basename(os.path.abspath(target_path)).replace(" ", "_")
+            if not folder_name: folder_name = "External_Import"
+            vault_dir = os.path.join(self.root_dir, "Global_Vault", f"External_{folder_name}")
+            os.makedirs(vault_dir, exist_ok=True)
+            
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from symlink_manager import create_safe_directory_link
+            
+            # Use symlink_manager logic which gracefully handles junction fallbacks
+            try:
+                create_safe_directory_link(target_path, os.path.join(vault_dir, "Models"))
+                self.send_json_response({"status": "success"})
+            except Exception as e:
+                 self.send_json_response({"status": "error", "message": str(e)}, 500)
+        except Exception as e:
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
 
     def send_json_response(self, data, status=200):
         self.send_response(status)
@@ -1503,13 +1599,17 @@ class AIWebServer(BaseHTTPRequestHandler):
         query = qs.get("query", [""])[0]
         type_filter = qs.get("type", [""])[0]
         limit = int(qs.get("limit", [40])[0])
+        offset = int(qs.get("offset", [0])[0])
         
+        filter_tags = None
         # Augment query for Text Encoder searches
         if type_filter == "Text Encoder":
             if not query:
                 query = "clip t5-xxl encoder"
             else:
                 query += " clip t5 encoder"
+        elif type_filter and type_filter not in ["Model", "Checkpoint"]:
+            filter_tags = type_filter.lower()
         
         try:
             sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
@@ -1522,7 +1622,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                     api_key = s.get("hf_api_key")
             
             client = HFClient(api_key=api_key)
-            result = client.search_models(query=query, limit=limit)
+            result = client.search_models(query=query, limit=limit, offset=offset, filter_tags=filter_tags)
             self.send_json_response({"status": "success", "items": result})
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
@@ -1536,7 +1636,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             vault_dir = os.path.join(self.root_dir, "Global_Vault")
             db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
             
-            known_filenames = {r['filename'] for r in db.list_models(limit=99999)}
+            known_filenames = db.get_all_filenames()
             
             count = 0
             api_key = data.get("api_key", "")
@@ -1680,20 +1780,35 @@ class AIWebServer(BaseHTTPRequestHandler):
                 installed_packages = sum(1 for d in os.listdir(packages_dir) if os.path.isdir(os.path.join(packages_dir, d)))
             running_packages = len(AIWebServer.running_processes)
 
-            # Sprint 9: Recent activity + category distribution
-            recent_generations = db.get_recent_activity(limit=5)
-            category_distribution = db.get_vault_category_distribution()
-
-            # Sprint 10: Disk space warning threshold
-            vault_size_warning_gb = 50  # default
+            # Sprint 10: Settings Data (Disk warning, Activity Feed Clear)
+            settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
             settings_data = {}
+            vault_size_warning_gb = 50  # default
+            activity_cleared_at = 0
             if os.path.exists(settings_path):
                 try:
                     with open(settings_path, 'r') as f:
                         settings_data = json.load(f)
                     vault_size_warning_gb = settings_data.get('vault_size_warning_gb', 50)
+                    activity_cleared_at = settings_data.get('activity_cleared_at', 0)
                 except (json.JSONDecodeError, OSError):
                     pass
+
+            # Sprint 9: Recent activity + category distribution
+            import datetime
+            raw_generations = db.get_recent_activity(limit=5)
+            recent_generations = []
+            for g in raw_generations:
+                # Isoformat from DB 'created_at' looks like '2024-05-15 14:30:22.123456'
+                # parse and compare to activity_cleared_at (epoch)
+                try:
+                    dt = datetime.datetime.strptime(g.get("created_at", ""), "%Y-%m-%d %H:%M:%S.%f")
+                    if dt.timestamp() > activity_cleared_at:
+                        recent_generations.append(g)
+                except Exception:
+                    recent_generations.append(g) # Fallback if parsing fails
+                    
+            category_distribution = db.get_vault_category_distribution()
 
             self.send_json_response({
                 "unpopulated_models": unpopulated,
@@ -2016,11 +2131,24 @@ def start_background_scanners():
                 )
                 print(f"[SERVER] Embedding engine started with PID: {embedding_process.pid}")
 
-            # // YOUR ORIGINAL VAULT CRAWLER AND CIVITAI CODE GOES HERE
-            # Put your original vault_crawler and civitai_client code in this area
+            # Background Vault and CivitAI Indexing Loop
+            import time
+            while True:
+                try:
+                    if os.path.join(root_dir, ".backend") not in sys.path:
+                        sys.path.insert(0, os.path.join(root_dir, ".backend"))
+                    from vault_crawler import VaultCrawler
+                    from civitai_client import CivitaiClient
+                    
+                    VaultCrawler(root_dir).crawl()
+                    CivitaiClient(root_dir).process_unpopulated_models()
+                except Exception as sc_e:
+                    print(f"[SERVER] Background scanners iteration error: {sc_e}")
+                
+                time.sleep(300) # Re-scan every 5 minutes
 
         except Exception as e:
-            print(f"[SERVER] Background scanners failed: {e}")
+            print(f"[SERVER] Background scanners thread crashed: {e}")
 
     t = threading.Thread(target=_run_scanners, daemon=True)
     t.start()

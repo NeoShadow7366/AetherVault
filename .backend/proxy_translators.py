@@ -29,7 +29,7 @@ def build_comfy_workflow(payload: dict) -> dict:
     loras = payload.get("loras", [])
     hires = payload.get("hires", {})
     init_image = payload.get("init_image_name", "")  # Uses uploaded filename
-    denoise = float(payload.get("denoising_strength", 1.0))
+    denoise = float(payload.get("denoising_strength", 1.0)) if init_image else 1.0
     controlnet = payload.get("controlnet", {})
     refiner_name = payload.get("refiner", "none")
     refiner_steps = int(payload.get("refiner_steps", 10))

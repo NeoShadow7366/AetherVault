@@ -5,10 +5,11 @@ on:
     branches: [ "main", "dev" ]
   pull_request:
     branches: [ "main", "dev" ]
+  workflow_dispatch:
 
 jobs:
-  build_and_test:
-    name: ${{ matrix.os }} - Python ${{ matrix.python-version }}
+  fast_tests:
+    name: Fast Tests (${{ matrix.os }} - Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -24,7 +25,32 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        cache: 'pip' # Automated caching saves network bandwidth per execution
+        cache: 'pip'
+        cache-dependency-path: 'requirements-qa.txt'
+
+    - name: Install Pure QA Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r requirements-qa.txt
+
+    - name: Execute Fast Pytest
+      run: |
+        python .tests/run_tests.py
+
+  e2e_tests:
+    name: Full E2E Tests (Ubuntu - Python 3.12)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout Code Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: 'pip'
         cache-dependency-path: 'requirements-qa.txt'
 
     - name: Install Pure QA Dependencies
@@ -34,22 +60,16 @@ jobs:
 
     - name: Auto-Install Headless Playwright Drivers
       run: |
-        python -m playwright install chromium
+        python -m playwright install chromium --with-deps
 
-    - name: Execute Pytest with High Coverage
+    - name: Execute E2E Suite
       run: |
-        python -m pytest .tests/ -v --cov=.backend/ --cov-report=xml --cov-report=term-missing --tracing retain-on-failure --video retain-on-failure --screenshot only-on-failure
+        python .tests/run_tests.py --e2e
 
     - name: Upload Playwright Forensic Traces
       uses: actions/upload-artifact@v4
       if: failure()
       with:
-        name: playwright-failure-traces-${{ matrix.os }}-${{ matrix.python-version }}
+        name: playwright-failure-traces
         path: test-results/
         retention-days: 7
-
-    - name: Upload Local Coverage Artifact Pipeline
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-results-${{ matrix.os }}-${{ matrix.python-version }}
-        path: coverage.xml

@@ -8,7 +8,7 @@ class HFClient:
         self.api_key = api_key
         self.base_url = "https://huggingface.co/api"
 
-    def search_models(self, query=None, filter_tags=None, sort="downloads", direction=-1, limit=20):
+    def search_models(self, query=None, filter_tags=None, sort="downloads", direction=-1, limit=20, offset=0):
         url = f"{self.base_url}/models?"
         params = []
         if query:
@@ -24,6 +24,8 @@ class HFClient:
         if direction == -1:
             params.append("direction=-1")
         params.append(f"limit={str(limit)}")
+        if offset > 0:
+            params.append(f"offset={str(offset)}")
         params.append("full=True") # Get metadata
         
         final_url = url + "&".join(params)

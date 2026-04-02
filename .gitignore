@@ -1,13 +1,16 @@
-# OS
-Thumbs.db
+# OS & Editor junk
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# Python cache/build
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-*.so
 .pytest_cache/
 .mypy_cache/
 .coverage
@@ -19,42 +22,38 @@ coverage.xml
 venv/
 env/
 
-# Local runtime artifacts
-logs/
-*.log
-*.zip
-*.bat
-*.sh
-
-# Backend generated state
-.backend/__pycache__/
-.backend/cache/
-.backend/cache/thumbnails/
-.backend/metadata.sqlite
-.backend/settings.json
-
-# Model Caches
-.cache/
-~/.cache/
-~/.cache/huggingface/
-
-# Build outputs
+# Build & runtime outputs
 dist/
 build/
 *.spec
 *.exe
 run_page.html
-
-# Large local/runtime dependencies
 bin/
+
+# Application-specific data (sensitive or large)
+logs/
+.backend/cache/
+.backend/metadata.sqlite
+.backend/settings.json
 Global_Vault/
 packages/
+.cache/
 
-# IDE / Editor
-.vscode/
-.idea/
-*.swp
-*.swo
+# Testing & log files
+*.log
+test_results*.txt
+test_result.txt
+e2e*.txt
+funcs.txt
+launcher.log
 
-# Agent runtime (conversation context)
+# Temporary agent context files (hide from GitHub, keep locally)
 .gemini/
+session-summary.md
+pending_work.md
+merged_walkthroughs.md
+
+# Keep the core Antigravity agent folders fully tracked
+!.agent/
+!.agents/
+!.github/

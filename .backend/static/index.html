@@ -69,20 +69,37 @@
         }
 
         .nav-item {
-            padding: 12px 15px;
-            border-radius: 8px;
+            padding: 14px 16px;
+            border-radius: 10px;
             cursor: pointer;
-            margin-bottom: 10px;
-            transition: all 0.2s ease;
+            margin-bottom: 8px;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             font-weight: 500;
+            display: flex;
+            align-items: center;
         }
 
         .nav-item:hover, .nav-item.active {
             background-color: var(--surface-hover);
+            transform: translateX(4px);
         }
         
         .nav-item.active {
             border-left: 3px solid var(--primary);
+            background-color: rgba(99, 102, 241, 0.1);
+        }
+
+        .nav-item img {
+            width: 24px;
+            height: 24px;
+            margin-right: 14px;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), filter 0.2s ease;
+            filter: drop-shadow(0 0 2px rgba(0,0,0,0.5));
+        }
+
+        .nav-item:hover img, .nav-item.active img {
+            transform: scale(1.15);
+            filter: drop-shadow(0 0 6px rgba(129, 140, 248, 0.6));
         }
 
         /* Main Content */
@@ -802,15 +819,15 @@
     <div id="lan-banner" class="lan-banner">⚠️ LAN Mode Active — Dashboard accessible to devices on your network at <span id="lan-ip-display">http://0.0.0.0:8080</span></div>
 
     <div class="sidebar">
-        <h2>🚀 AI Manager</h2>
-        <div class="nav-item" onclick="switchTab('dashboard', this)">📊 Dashboard</div>
-        <div class="nav-item active" onclick="switchTab('explorer', this)">Model Explorer</div>
-        <div class="nav-item" onclick="switchTab('vault', this)">Global Vault</div>
-        <div class="nav-item" onclick="switchTab('creations', this)">🎨 My Creations</div>
-        <div class="nav-item" onclick="switchTab('inference', this)">Inference Studio</div>
-        <div class="nav-item" onclick="switchTab('appstore', this)">App Store</div>
-        <div class="nav-item" onclick="switchTab('packages', this)">Installed Packages</div>
-        <div class="nav-item" onclick="switchTab('settings', this)" style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 15px;">⚙️ Settings</div>
+        <h2><img src="/icons/Logo.png" alt="Logo" style="width:28px; height:28px; vertical-align:middle; margin-right:8px; border-radius:4px;">AI Manager</h2>
+        <div class="nav-item" onclick="switchTab('dashboard', this)"><img src="/icons/Dashboard.png" alt="">Dashboard</div>
+        <div class="nav-item" onclick="switchTab('appstore', this)"><img src="/icons/App Store.png" alt="">App Store</div>
+        <div class="nav-item active" onclick="switchTab('explorer', this)"><img src="/icons/Model Explorer.png" alt="">Model Explorer</div>
+        <div class="nav-item" onclick="switchTab('inference', this)"><img src="/icons/Inference Studio.png" alt="">Inference Studio</div>
+        <div class="nav-item" onclick="switchTab('creations', this)"><img src="/icons/My Creations.png" alt="">My Creations</div>
+        <div class="nav-item" onclick="switchTab('packages', this)"><img src="/icons/Installed Packages.png" alt="">Installed Packages</div>
+        <div class="nav-item" onclick="switchTab('vault', this)"><img src="/icons/Global Vault.png" alt="">Global Vault</div>
+        <div class="nav-item" onclick="switchTab('settings', this)" style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 15px;"><img src="/icons/Settings.png" alt="">Settings</div>
     </div>
 
     <div class="main-content">
@@ -826,32 +843,32 @@
                 <p>Your unified hub for AI model management, inference, and workflow automation.</p>
             </div>
             <div class="dash-grid">
-                <div class="dash-card">
+                <div class="dash-card" style="cursor: pointer;" onclick="switchTab('vault')">
                     <div class="dash-card-icon">🧠</div>
                     <div class="dash-card-value" id="dash-models">—</div>
                     <div class="dash-card-label">Models Indexed</div>
                 </div>
-                <div class="dash-card">
+                <div class="dash-card" style="cursor: pointer;" onclick="switchTab('creations')">
                     <div class="dash-card-icon">🎨</div>
                     <div class="dash-card-value" id="dash-generations">—</div>
                     <div class="dash-card-label">Creations Generated</div>
                 </div>
-                <div class="dash-card">
+                <div class="dash-card" style="cursor: pointer;" onclick="switchTab('vault')">
                     <div class="dash-card-icon">💾</div>
                     <div class="dash-card-value" id="dash-vault-size">—</div>
                     <div class="dash-card-label">Vault Size</div>
                 </div>
-                <div class="dash-card">
+                <div class="dash-card" style="cursor: pointer;" onclick="switchTab('packages')">
                     <div class="dash-card-icon">📦</div>
                     <div class="dash-card-value" id="dash-packages">—</div>
                     <div class="dash-card-label">Packages Installed</div>
                 </div>
-                <div class="dash-card">
+                <div class="dash-card" style="cursor: pointer;" onclick="switchTab('inference')">
                     <div class="dash-card-icon">📝</div>
                     <div class="dash-card-value" id="dash-prompts">—</div>
                     <div class="dash-card-label">Saved Prompts</div>
                 </div>
-                <div class="dash-card">
+                <div class="dash-card" style="cursor: pointer;" onclick="switchTab('packages')">
                     <div class="dash-card-icon">⚡</div>
                     <div class="dash-card-value" id="dash-running">—</div>
                     <div class="dash-card-label">Running Engines</div>
@@ -862,7 +879,10 @@
             <div class="dash-row">
                 <!-- Activity Feed -->
                 <div class="activity-feed">
-                    <h3>📈 Recent Activity</h3>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h3 style="margin: 0;">📈 Recent Activity</h3>
+                        <button onclick="clearDashboardActivity()" style="background: var(--surface-hover); color: var(--text-muted); border: 1px solid var(--border); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight: 600; transition: all 0.2s;" onmouseover="this.style.color='white'; this.style.borderColor='#ef4444';" onmouseout="this.style.color='var(--text-muted)'; this.style.borderColor='var(--border)';">Clear Feed</button>
+                    </div>
                     <div id="dash-activity-list">
                         <div style="color: var(--text-muted); font-size: 0.9rem; text-align: center; padding: 20px;">No recent activity.</div>
                     </div>
@@ -888,7 +908,7 @@
         <!-- Model Explorer View -->
         <div id="view-explorer">
             <div class="toolbar">
-                <select id="ex-source" onchange="loadExplorer()" style="background:var(--primary); color:white; font-weight:bold; border-radius:8px; padding:0 10px; height:40px; border:none; cursor:pointer;">
+                <select id="ex-source" onchange="onExplorerSourceChange()" style="background:var(--primary); color:white; font-weight:bold; border-radius:8px; padding:0 10px; height:40px; border:none; cursor:pointer;">
                     <option value="civitai">CivitAI</option>
                     <option value="huggingface">Hugging Face</option>
                 </select>
@@ -1013,6 +1033,7 @@
                 <button onclick="triggerUpdatesCheck()" style="margin-left: 10px; padding: 10px 15px; background: var(--surface-hover); color: #60a5fa; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem;" title="Query CivitAI for newer versions">🔄 Check Updates</button>
             <button id="vault-select-toggle" onclick="toggleVaultSelectMode()" style="margin-left: 10px; padding: 10px 15px; background: var(--surface-hover); color: var(--text-muted); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem;" title="Multi-Select for Bulk Operations">☑️ Select</button>
                 <button onclick="triggerUnmanagedImport()" style="margin-left: 10px; padding: 10px 15px; background: var(--surface-hover); color: #a7f3d0; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem;" title="Scan Global_Vault for local files and fetch metadata">📥 Import Local Files</button>
+                <button onclick="triggerExternalImport()" style="margin-left: 10px; padding: 10px 15px; background: var(--surface-hover); color: #fde047; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem;" title="Link an external folder (e.g. Stability Matrix Models)">🔗 External Folder</button>
                 <button id="btn-vault-import-backup" onclick="document.getElementById('vault-import-file').click()" style="margin-left: 10px; padding: 10px 15px; background: var(--surface-hover); color: #60a5fa; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.85rem;" title="Import metadata from a vault export JSON">📤 Import Backup</button>
                 <input type="file" id="vault-import-file" accept=".json" style="display:none" onchange="handleVaultImportBackup(this.files[0])">
             </div>
@@ -1604,8 +1625,8 @@
                 <textarea id="inf-prompt" style="flex: 1; outline: none; background: var(--bg-color); border: 1px solid var(--border); color: #fff; padding: 15px; border-radius: 8px; resize: vertical; min-height: 100px; font-size: 1rem; font-family: inherit; margin-bottom: 4px;" placeholder="masterpiece, best quality, highly detailed..." oninput="updateTokenCounter()"></textarea>
                 <div class="token-counter green" id="inf-token-counter"><span class="count" id="inf-token-count">0</span><span style="color:var(--text-muted)"> / <span id="inf-token-limit">77</span> tokens</span></div>
                 
-                <div id="inf-sd-neg-row"><label class="section-title">Negative Prompt</label>
-                <textarea id="inf-negative" style="flex: 1; outline: none; background: var(--bg-color); border: 1px solid var(--border); color: #fff; padding: 15px; border-radius: 8px; resize: vertical; min-height: 100px; font-size: 1rem; font-family: inherit;" placeholder="worst quality, low quality, blurry..."></textarea></div>
+                <div id="inf-sd-neg-row" style="display: flex; flex-direction: column;"><label class="section-title">Negative Prompt</label>
+                <textarea id="inf-negative" style="flex: 1; outline: none; background: var(--bg-color); border: 1px solid var(--border); color: #fff; padding: 15px; border-radius: 8px; resize: vertical; min-height: 100px; font-size: 1rem; font-family: inherit; width: 100%; box-sizing: border-box;" placeholder="worst quality, low quality, blurry..."></textarea></div>
                 
                 <div style="margin-top: 20px;">
                     <label class="section-title">Image-to-Image (Optional)</label>
@@ -1800,22 +1821,56 @@
             return handleCnUploadFile(e.target.files[0]);
         }
 
-        /* --- Scroll-to-Zoom on Output Canvas --- */
+        /* --- Scroll-to-Zoom & Drag-to-Pan on Output Canvas --- */
         (function() {
             let _zoom = 1.0;
+            let _panX = 0;
+            let _panY = 0;
+            let _isPanning = false;
+            let _startX = 0;
+            let _startY = 0;
+
             document.addEventListener('DOMContentLoaded', () => {
                 const container = document.getElementById('inf-canvas-container');
                 const img = document.getElementById('inf-canvas-img');
                 if(!container || !img) return;
+
+                const updateTransform = () => {
+                    img.style.transform = `scale(${_zoom}) translate(${_panX}px, ${_panY}px)`;
+                };
+
                 container.addEventListener('wheel', (e) => {
                     if(img.style.display === 'none') return;
                     e.preventDefault();
                     _zoom = Math.min(8, Math.max(0.2, _zoom * (e.deltaY < 0 ? 1.12 : 0.9)));
-                    img.style.transform = `scale(${_zoom})`;
+                    updateTransform();
                 }, { passive: false });
+
+                container.addEventListener('mousedown', (e) => {
+                    if(img.style.display === 'none') return;
+                    _isPanning = true;
+                    _startX = e.clientX - (_panX * _zoom);
+                    _startY = e.clientY - (_panY * _zoom);
+                    container.style.cursor = 'grabbing';
+                });
+
+                window.addEventListener('mousemove', (e) => {
+                    if(!_isPanning) return;
+                    _panX = (e.clientX - _startX) / _zoom;
+                    _panY = (e.clientY - _startY) / _zoom;
+                    updateTransform();
+                });
+
+                window.addEventListener('mouseup', () => {
+                    _isPanning = false;
+                    container.style.cursor = 'default';
+                });
+
                 container.addEventListener('dblclick', () => {
                     _zoom = 1.0;
-                    img.style.transform = 'scale(1)';
+                    _panX = 0;
+                    _panY = 0;
+                    updateTransform();
                 });
             });
         })();
@@ -1944,6 +1999,40 @@
             } else if(e.dataTransfer.files && e.dataTransfer.files.length) {
                 restoreMetadataFromDrop(e);
             }
+        }
+
+        function restoreMetadataFromDrop(e) {
+            const file = e.dataTransfer.files[0];
+            if(!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const img = document.getElementById('inf-canvas-img');
+                img.src = evt.target.result;
+                img.style.display = 'block';
+                document.getElementById('inf-canvas-empty').style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function repopulateUI(metadata) {
+            if(!metadata) return;
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if(el && val !== undefined && val !== null) el.value = val;
+            };
+
+            setVal('inf-prompt', metadata.prompt || '');
+            setVal('inf-negative', metadata.negative || '');
+            setVal('inf-model', metadata.model || '');
+            setVal('inf-sampler', metadata.sampler || 'euler');
+            setVal('inf-steps', metadata.steps || 20);
+            setVal('inf-cfg', metadata.cfg || 7.0);
+            setVal('inf-seed', metadata.seed || -1);
+            setVal('inf-width', metadata.width || 1024);
+            setVal('inf-height', metadata.height || 1024);
+            
+            showSettingsToast("Canvas & Generation Parameters Restored");
         }
 
         /* --- Hires Upscaler: map UI value to ComfyUI node params --- */
@@ -2346,9 +2435,20 @@
         function openGalleryItem(id) {
             const g = _galleryData.find(x => x.id === id);
             if(!g) return;
-            _glCurrentItem = g;
+            
+            if(window._abSelectMode) {
+                if(window._abSelectMode === 'a') {
+                    _abSlotA = g;
+                    renderABPane('a', g);
+                } else if(window._abSelectMode === 'b') {
+                    _abSlotB = g;
+                    renderABPane('b', g);
+                }
+                window._abSelectMode = null;
+                return;
+            }
 
-            document.getElementById('gl-img').src = g.image_path;
+            _glCurrentItem = g;            document.getElementById('gl-img').src = g.image_path;
             document.getElementById('gl-prompt').innerText = g.prompt || 'N/A';
             document.getElementById('gl-negative').innerText = g.negative || 'N/A';
             document.getElementById('gl-model').innerText = g.model || '—';
@@ -2468,13 +2568,13 @@
                 const res = await fetch('/api/gallery/delete', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ ids: [id] })
+                    body: JSON.stringify({ id: id })
                 });
                 const data = await res.json();
                 if(data.status === 'success') {
                     document.getElementById('gallery-lightbox').style.display = 'none';
                     _galleryData = _galleryData.filter(x => x.id !== id);
-                    renderGalleryGrid(_galleryData);
+                    renderGallery(_galleryData);
                     showSettingsToast('🗑 Generation deleted');
                 } else alert(data.message);
             } catch(e) {
@@ -2499,6 +2599,7 @@
             document.getElementById('gallery-lightbox').style.display = 'none';
             const overlay = document.getElementById('ab-comparison');
             overlay.classList.add('open');
+            window._abSelectMode = 'b';
 
             // Render pane A
             renderABPane('a', _abSlotA);
@@ -2524,7 +2625,12 @@
 
         function closeABComparison() {
             document.getElementById('ab-comparison').classList.remove('open');
-            _abSelectMode = null;
+            window._abSelectMode = null;
+        }
+
+        function openComparePicker(side) {
+            window._abSelectMode = side;
+            showSettingsToast(`Click a gallery card to select Image ${side.toUpperCase()}`);
         }
 
         function swapABPanes() {
@@ -2588,6 +2694,17 @@
             loadExplorer();
         }
 
+        // Phase 5: Dynamic type filter based on source
+        const _civitaiTypes = '<option value="">All Types</option><option value="Checkpoint">Checkpoint</option><option value="TextualInversion">Embedding / TextualInversion</option><option value="Hypernetwork">Hypernetwork</option><option value="AestheticGradient">Aesthetic Gradient</option><option value="LORA">LoRA</option><option value="LoCon">LoCon / LyCORIS</option><option value="DoRA">DoRA</option><option value="Controlnet">Controlnet</option><option value="Upscaler">Upscaler</option><option value="MotionModule">Motion</option><option value="VAE">VAE</option><option value="Poses">Poses</option><option value="Wildcards">Wildcards</option><option value="Workflows">Workflows</option><option value="Detection">Detection</option><option value="Other">Other</option><option value="Text Encoder">Text Encoder (CLIP/T5)</option>';
+        const _hfTypes = '<option value="">All Tasks</option><option value="text-to-image">Text-to-Image</option><option value="image-to-image">Image-to-Image</option><option value="LORA">LoRA</option><option value="Controlnet">ControlNet</option><option value="Text Encoder">Text Encoder (CLIP/T5)</option>';
+
+        function onExplorerSourceChange() {
+            const source = document.getElementById('ex-source').value;
+            const typeSelect = document.getElementById('ex-type');
+            typeSelect.innerHTML = (source === 'huggingface') ? _hfTypes : _civitaiTypes;
+            loadExplorer();
+        }
+
         async function loadExplorer() {
             const grid = document.getElementById('explorer-grid');
             const source = document.getElementById('ex-source').value;
@@ -2604,7 +2721,7 @@
             const sort = document.getElementById('ex-sort').value;
             if(sort === "Favorites") {
                 grid.innerHTML = '';
-                const favs = JSON.parse(localStorage.getItem('ai_favorites') || '{}');
+                const favs = window.appFavorites || {};
                 const favItems = Object.values(favs);
                 if(favItems.length === 0) {
                      grid.innerHTML = '<div class="empty-state">No Favorites saved yet! Click the star on a Model Card.</div>';
@@ -2707,7 +2824,7 @@
             }
 
             const hideInstalled = document.getElementById('ex-installed').checked;
-            const favs = JSON.parse(localStorage.getItem('ai_favorites') || '{}');
+            const favs = window.appFavorites || {};
             activeModels = {};
             
             items.forEach(model => {
@@ -2767,16 +2884,22 @@
             });
         }
 
-        function toggleFavorite(modelId) {
+        async function toggleFavorite(modelId) {
             const m = activeModels[modelId];
             if(!m) return;
-            let favs = JSON.parse(localStorage.getItem('ai_favorites') || '{}');
-            if(favs[modelId]) {
-                delete favs[modelId];
+            if(!window.appFavorites) window.appFavorites = {};
+            if(window.appFavorites[modelId]) {
+                delete window.appFavorites[modelId];
             } else {
-                favs[modelId] = m;
+                window.appFavorites[modelId] = m;
             }
-            localStorage.setItem('ai_favorites', JSON.stringify(favs));
+            try {
+                await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ favorites: window.appFavorites })
+                });
+            } catch(e) { console.warn('Failed to persist favorites:', e); }
             loadExplorer();
         }
 
@@ -3249,7 +3372,21 @@
 
             if(!window._semanticSearchActive) {
                 vaultOffset += models.length;
-                loadMoreBtn.style.display = (vaultOffset < total) ? 'block' : 'none';
+                if(vaultOffset < total) {
+                    loadMoreBtn.style.display = 'block';
+                    // Phase 5: IntersectionObserver for infinite scroll
+                    if(window._vaultScrollObserver) window._vaultScrollObserver.disconnect();
+                    window._vaultScrollObserver = new IntersectionObserver((entries) => {
+                        if(entries[0].isIntersecting) {
+                            window._vaultScrollObserver.disconnect();
+                            loadModels(true);
+                        }
+                    }, { rootMargin: '400px' });
+                    window._vaultScrollObserver.observe(loadMoreBtn);
+                } else {
+                    loadMoreBtn.style.display = 'none';
+                    if(window._vaultScrollObserver) window._vaultScrollObserver.disconnect();
+                }
             }
         }
 
@@ -3275,14 +3412,16 @@
                         <button onclick="launchPackage('${p.id}')" style="background: var(--primary); color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">Launch UI</button>
                     `;
                     
+                    const statusDot = p.is_running ? `<div class="progress-pulsing" style="width:10px; height:10px; border-radius:50%; background:#10b981; display:inline-block; margin-left:8px;" title="Running"></div>` : '';
+
                     grid.innerHTML += `
                         <div class="std-card">
-                            <h3 class="card-title">${p.name}</h3>
+                            <h3 class="card-title" style="display:flex; align-items:center;">${p.name}${statusDot}</h3>
                             <div style="margin-top: 15px; display:flex; gap:10px; flex-wrap:wrap;">
                                 ${runBtns}
                                 <button onclick="openLogTerminal('${p.id}', '${p.name}')" style="background: var(--surface-hover); color: white; border: 1px solid var(--border); padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">⌨️ Terminal</button>
                                 <button onclick="openExtensions('${p.id}', '${p.name}')" style="background: #8b5cf6; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">Plugins</button>
-                                <button onclick="uninstallPackage('${p.id}')" ${p.is_running ? 'disabled' : ''} style="background: ${p.is_running ? '#9ca3af' : '#ef4444'}; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: ${p.is_running ? 'not-allowed' : 'pointer'}; font-weight: 600;" title="${p.is_running ? 'Cannot uninstall while running.' : 'Uninstall'}">Uninstall</button>
+                                <button onclick="uninstallPackage('${p.id}')" style="background: #ef4444; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;" title="Uninstall">Uninstall</button>
                             </div>
                         </div>
                     `;
@@ -3365,10 +3504,14 @@
                     body: JSON.stringify({package_id: packageId})
                 });
                 const response = await res.json();
-                if(response.status === 'success') loadPackages();
-                else alert(response.message);
+                if(response.status === 'success') {
+                    if(response.url) {
+                        setTimeout(() => window.open(response.url, '_blank'), 1500); // give it a sec to boot
+                    }
+                    loadPackages();
+                } else alert(response.message);
             } catch(e) { alert("Failed to contact server"); }
-            setTimeout(() => btn.innerText = originalText, 2000);
+            setTimeout(() => { if(btn) btn.innerText = originalText }, 2000);
         }
 
         async function stopPackage(packageId) {
@@ -3477,6 +3620,28 @@
                 const data = await res.json();
                 alert(data.message || "Import scan started.");
             } catch(e) { alert("Failed to start import scan."); }
+        }
+
+        async function triggerExternalImport() {
+            const extPath = prompt('Enter the absolute path to your external Models folder (e.g. C:\\Users\\Name\\AppData\\Roaming\\StabilityMatrix\\Models).\n\nA zero-byte directory link will be created inside Global_Vault to native scan these models.');
+            if(!extPath || !extPath.trim()) return;
+            
+            try {
+                showSettingsToast('🔗 Linking external folder...');
+                const res = await fetch('/api/import/external', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ path: extPath.trim() })
+                });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    showSettingsToast('✅ Successfully linked folder! Scanning will begin automatically.');
+                    // Trigger a scan immediately
+                    await fetch('/api/vault/import_scan', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
+                } else {
+                    alert("Link failed: " + data.message);
+                }
+            } catch(e) { alert("Connection Error during linking."); }
         }
 
         async function triggerHealthCheck() {
@@ -4435,11 +4600,16 @@
                 const data = await res.json();
                 const toast = document.getElementById('global-sync-toast');
                 if(data.is_syncing) {
-                    toast.style.display = 'flex';
                     let msgs = [];
                     if(data.unpopulated_models > 0) msgs.push(`Indexing ${data.unpopulated_models} Models`);
                     if(data.active_downloads > 0) msgs.push(`${data.active_downloads} Downloads Active`);
-                    toast.innerText = `✨ ${msgs.join(" | ")}...`;
+                    
+                    if(msgs.length > 0) {
+                        toast.style.display = 'flex';
+                        toast.innerText = `✨ ${msgs.join(" | ")}...`;
+                    } else {
+                        toast.style.display = 'none';
+                    }
                 } else {
                     toast.style.display = 'none';
                 }
@@ -4564,12 +4734,27 @@
             `).join('');
         }
 
+        async function clearDashboardActivity() {
+            if(!confirm("Clear Dashboard Activity Feed?\n\nThis will clear the downloads log. Your Gallery generations and actual files will NOT be affected, as requested.")) return;
+            try {
+                const res = await fetch('/api/dashboard/clear_history', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({}) });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    showSettingsToast('🧹 Feed cleared.');
+                    refreshDashboard();
+                } else alert("Failed: " + data.message);
+            } catch(e) { alert("Failed to clear feed."); }
+        }
+
         const DONUT_COLORS = ['#6366f1','#f59e0b','#10b981','#3b82f6','#ec4899','#8b5cf6','#06b6d4','#f43f5e','#84cc16','#a855f7'];
 
         function renderDonutChart(distribution) {
             const svg = document.getElementById('dash-donut');
             const legend = document.getElementById('dash-donut-legend');
             if(!svg || !legend) return;
+
+            // Rest of donut chart code omitted here
+
 
             const entries = Object.entries(distribution).filter(([k,v]) => v > 0);
             const total = entries.reduce((s, [,v]) => s + v, 0);
@@ -4800,6 +4985,24 @@
                 if(lanEl) lanEl.checked = !!data.lan_sharing;
                 if(data.civitai_api_key) localStorage.setItem('civitai_api_key', data.civitai_api_key);
                 if(data.hf_api_key) localStorage.setItem('hf_api_key', data.hf_api_key);
+                
+                // Phase 5: Favorites migration from localStorage to settings.json
+                window.appFavorites = data.favorites || {};
+                const localFavs = localStorage.getItem('ai_favorites');
+                if(localFavs && !data.favorites_migrated) {
+                    try {
+                        const parsedLocal = JSON.parse(localFavs);
+                        if(Object.keys(parsedLocal).length > 0) {
+                            window.appFavorites = { ...window.appFavorites, ...parsedLocal };
+                            fetch('/api/settings', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ favorites: window.appFavorites, favorites_migrated: true })
+                            }).then(() => localStorage.removeItem('ai_favorites'));
+                            console.log('[Phase 5] Migrated', Object.keys(parsedLocal).length, 'favorites from localStorage to settings.json');
+                        }
+                    } catch(e) { console.warn('Favorites migration failed:', e); }
+                }
             } catch(e) {
                 console.warn('Failed to load settings from server:', e);
             }
@@ -4846,20 +5049,41 @@
         async function triggerSystemUpdate() {
             if(!confirm('Apply System Update?\n\nThis will pull the latest code from the repository and restart the server. Your Global Vault, settings, and database are safe.')) return;
             try {
+                const modal = document.getElementById('ext-modal');
+                if(modal) {
+                    modal.style.display = 'flex';
+                    document.getElementById('ext-title').innerText = "System OTA Update";
+                    document.getElementById('ext-progress-text').innerText = "Initiating Update...";
+                    document.getElementById('ext-progress-bar').style.width = '10%';
+                    document.getElementById('ext-log-output').innerText = "[Client] Requesting System Update from server...\n";
+                }
+
                 const res = await fetch('/api/system/update', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({})
                 });
                 const data = await res.json();
-                if(data.status === 'success') {
+                
+                if(modal) {
+                    const logEl = document.getElementById('ext-log-output');
+                    if(data.status === 'success') {
+                        logEl.innerText += "[Server] Updater spawned.\n[Server] Detaching and shutting down current instance...\n[Client] Waiting for reboot...";
+                        document.getElementById('ext-progress-text').innerText = "Restarting Server...";
+                        document.getElementById('ext-progress-bar').style.width = '50%';
+                    } else {
+                        logEl.innerText += `\n[Error] ${data.message || 'Unknown'}`;
+                        document.getElementById('ext-progress-text').innerText = "Update Failed";
+                    }
+                } else if(data.status === 'success') {
                     showSettingsToast('🔄 Update started. Server restarting...');
-                    waitForReboot();
-                } else {
-                    alert('Update failed: ' + (data.message || 'Unknown error'));
-                }
+                } else alert('Update failed: ' + data.message);
+
+                if(data.status === 'success') waitForReboot();
             } catch(e) {
-                alert('Failed to trigger update: ' + e.message);
+                if(document.getElementById('ext-log-output')) {
+                    document.getElementById('ext-log-output').innerText += `\n[Exception] ${e.message}`;
+                } else alert('Failed to trigger update: ' + e.message);
             }
         }
 
@@ -5444,14 +5668,14 @@
                 </div>
             </div>
             <div class="ab-body">
-                <div class="ab-pane" id="ab-pane-a">
+                <div class="ab-pane" id="ab-pane-a" style="cursor: pointer;" onclick="openComparePicker('a')">
                     <div class="ab-pane-label">A</div>
                     <img id="ab-img-a" src="" style="display:none;">
                     <div id="ab-empty-a" style="color:var(--text-muted); font-size:0.95rem;">Select Image A from gallery</div>
                     <div class="ab-pane-meta" id="ab-meta-a"></div>
                 </div>
                 <div class="ab-divider" id="ab-divider"></div>
-                <div class="ab-pane" id="ab-pane-b">
+                <div class="ab-pane" id="ab-pane-b" style="cursor: pointer;" onclick="openComparePicker('b')">
                     <div class="ab-pane-label">B</div>
                     <img id="ab-img-b" src="" style="display:none;">
                     <div id="ab-empty-b" style="color:var(--text-muted); font-size:0.95rem;">Select Image B from gallery</div>

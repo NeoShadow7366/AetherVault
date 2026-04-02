@@ -31,7 +31,7 @@ def create_release_build(root_dir: str):
         "merged_walkthroughs.txt", "pending_work.md", "collect_docs.py",
         "requirements-qa.txt", "start_manager.bat", "start_manager.sh",
         "tray_launcher.py", "Antigravity.spec", "agents.md",
-        "session-summary.md", "README.md"
+        "session-summary.md", "README.md", "settings.json"
     }
     
     # We will explicitly add Global_Vault subdirectories manually as empty stubs
