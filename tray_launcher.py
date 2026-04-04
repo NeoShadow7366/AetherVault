@@ -39,7 +39,7 @@ def acquire_mutex():
         log_msg("Mutex skipped (POSIX gracefully bypasses ctypes windll).")
         return
 
-    mutex_name = "AntigravityLauncherMutex_Prod_v1"
+    mutex_name = "AetherVaultLauncherMutex_Prod_v1"
     mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
     if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
         log_msg("Instance already running. Opening dashboard.")
@@ -105,7 +105,7 @@ def download_portable_python(base_path):
     os.makedirs(os.path.join(base_path, "packages"), exist_ok=True)
 
     root = tk.Tk()
-    root.title("Antigravity Toolkit Setup")
+    root.title("AetherVault Setup")
     root.geometry("480x280")
     root.resizable(False, False)
     root.attributes("-topmost", True)
@@ -119,7 +119,7 @@ def download_portable_python(base_path):
     status_var = tk.StringVar(root, value="Initializing first-time setup...")
     
     # Try rendering the Logo gracefully
-    icon_path = get_bundled_resource("logo.ico")
+    icon_path = get_bundled_resource("icons/Logo.ico")
     
     try:
         # Add the native window corner icon (can fail on POSIX)
@@ -310,7 +310,7 @@ def start_server():
 
 
 def wait_and_open_browser():
-    log_msg("Waiting for Antigravity server to start on http://localhost:8080...")
+    log_msg("Waiting for AetherVault server to start on http://localhost:8080...")
     max_wait_seconds = 30
     start_time = time.time()
     time.sleep(1.5)
@@ -430,22 +430,22 @@ def quit_app(icon, item):
 
 if __name__ == "__main__":
     acquire_mutex()
-    log_msg("=== Antigravity Launcher Started ===")
+    log_msg("=== AetherVault Launcher Started ===")
 
     start_server()
     threading.Thread(target=wait_and_open_browser, daemon=True).start()
 
     menu = pystray.Menu(
-        item('Open Antigravity Dashboard', open_dashboard, default=True),
+        item('Open AetherVault Dashboard', open_dashboard, default=True),
         item('Quit Application', quit_app)
     )
 
-    icon_path = get_bundled_resource("logo.ico")
+    icon_path = get_bundled_resource("icons/Logo.ico")
     if os.path.exists(icon_path):
         target_img = Image.open(icon_path)
     else:
-        log_msg("logo.ico not found - using generic icon")
+        log_msg("icons/Logo.ico not found - using generic icon")
         target_img = Image.new('RGB', (64, 64), color=(43, 43, 43))
 
-    icon = pystray.Icon("Antigravity", target_img, "Antigravity AI Manager", menu)
+    icon = pystray.Icon("AetherVault", target_img, "AetherVault — AI Manager", menu)
     icon.run()

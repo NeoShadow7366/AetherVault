@@ -248,6 +248,8 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.handle_vault_import(data)
         elif path == "/api/vault/updates":
             self.handle_vault_updates(data)
+        elif path == "/api/vault/repair":
+            self.handle_vault_repair(data)
         elif path == "/api/vault/health_check":
             self.handle_vault_health_check(data)
         elif path == "/api/vault/import_scan":
@@ -280,6 +282,10 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"error": f"Endpoint {path} not found"}, 404)
 
     def serve_static_files(self, path):
+        import urllib.parse
+        # Decode and normalize path separators for Windows
+        path = urllib.parse.unquote(path).replace('\\', '/')
+        
         # Default to index.html
         if path == "/":
             path = "/index.html"
@@ -457,7 +463,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                     for i in range(0, len(hashes), 900):
                         chunk = hashes[i:i+900]
                         placeholders = ','.join('?' * len(chunk))
-                        cursor.execute(f'SELECT file_hash, tag FROM tags WHERE file_hash IN ({placeholders})', chunk)
+                        cursor.execute(f'SELECT file_hash, tag FROM user_tags WHERE file_hash IN ({placeholders})', chunk)
                         for h, tag in cursor.fetchall():
                             hash_to_tags.setdefault(h, []).append(tag)
             
@@ -1192,7 +1198,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             # Self-heal: Drop missing files seamlessly
             valid_rows = []
             for r in rows:
-                if os.path.exists(r.get("file_path", "")):
+                if os.path.exists(r.get("image_path", "")):
                     valid_rows.append(r)
                 else:
                     db.delete_generation(r.get("id"))
@@ -2156,8 +2162,19 @@ def start_background_scanners():
 
 def run_server(port=8080):
     global global_http_server
-    # Check settings for LAN sharing
+    
+    # ── Cold Start Initialization Guard ──
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    backend_sys = os.path.join(root_dir, ".backend")
+    if backend_sys not in sys.path:
+        sys.path.insert(0, backend_sys)
+    try:
+        import bootstrap
+        bootstrap.main()
+    except Exception as e:
+        logging.error(f"[SERVER] Pre-flight Bootstrap Failed: {e}")
+        
+    # Check settings for LAN sharing
     settings_path = os.path.join(root_dir, ".backend", "settings.json")
     lan_sharing = False
     if os.path.exists(settings_path):

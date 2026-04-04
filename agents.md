@@ -184,7 +184,7 @@ Every code change follows this mandatory reasoning pipeline:
 2. ANALYZE  → Read .agents/skills/intelligent_model_router/SKILL.md
 3. CLASSIFY → Determine task complexity using the decision tree above
 4. RECOMMEND→ State the recommended model and reasoning
-5. REQUEST  → Explicitly ask the user to switch models in the Antigravity UI
+5. REQUEST  → Explicitly ask the user to switch models in the AetherVault UI
 6. WAIT     → Do NOT proceed until user confirms the switch
 7. RESUME   → Continue work with the new model
 ```
@@ -298,12 +298,12 @@ Executes automated regression testing on save or commit, parses failures, and ap
 ### Architecture Guardian (Monolith Sentinel)
 
 **Purpose**:  
-Acts as the proactive gatekeeper for software infrastructure and architectural integrity. Ensures that changes in one part of the monolithic application do not adversely affect other areas while strictly enforcing zero-dependency "Anti-Gravity" principles.
+Acts as the proactive gatekeeper for software infrastructure and architectural integrity. Ensures that changes in one part of the monolithic application do not adversely affect other areas while strictly enforcing zero-dependency "AetherVault" principles.
 
 > **Workflow Reference:** See [guardian_workflow.md](file:///g:/AG SM/.agents/visualizations/guardian_workflow.md) for the complete sequence diagram mapping how the Architecture Guardian orchestrates the API Librarian, QA Guardian, Safe Test Runner, and Health Doctor.
 
 **Key Responsibilities**:
-- Protection of zero-dependency rules and anti-gravity philosophy
+- Protection of zero-dependency rules and AetherVault philosophy
 - Pre-change impact analysis and cross-boundary tracing (frontend → server.py → proxy_translators.py → subprocess sandboxes → Global_Vault/SQLite)
 - Prevention of JSON payload mismatches, database locking issues, zombie processes, and tight coupling
 - Live dependency mapping and safe refactoring guidance

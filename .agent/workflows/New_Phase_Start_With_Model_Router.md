@@ -25,7 +25,7 @@ Before writing any code or making architectural decisions:
 Follow `.agent/rules/model_switch_confirmation.md`:
 
 - [ ] Output the model recommendation in standard format
-- [ ] If a switch is needed, explicitly ask the user to change models in the Antigravity UI
+- [ ] If a switch is needed, explicitly ask the user to change models in the AetherVault UI
 - [ ] **WAIT** for the user's confirmation before proceeding
 - [ ] Log the decision (accepted, declined, or already on correct model)
 
@@ -84,5 +84,5 @@ Only after both model selection AND plan approval:
 ⚡ Current:     Gemini 3 Pro
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⏸️ ACTION: Please switch to Claude Opus 4.6 (Thinking) in the
-           Antigravity UI settings before proceeding. Confirm when ready.
+           AetherVault UI settings before proceeding. Confirm when ready.
 ```

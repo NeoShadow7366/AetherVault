@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 def create_release_build(root_dir: str):
     logging.info("Compiling launcher executable...")
     try:
-        subprocess.run(["pyinstaller", "Antigravity.spec", "--clean", "-y", "--distpath", "."], cwd=root_dir, check=True)
+        subprocess.run(["pyinstaller", "NTLAIT.spec", "--clean", "-y", "--distpath", "."], cwd=root_dir, check=True)
     except Exception as e:
         logging.error(f"Failed to compile launcher: {e}")
         return
@@ -30,8 +30,9 @@ def create_release_build(root_dir: str):
         ".coverage", "test_results.txt", "merged_walkthroughs.md",
         "merged_walkthroughs.txt", "pending_work.md", "collect_docs.py",
         "requirements-qa.txt", "start_manager.bat", "start_manager.sh",
-        "tray_launcher.py", "Antigravity.spec", "agents.md",
-        "session-summary.md", "README.md", "settings.json"
+        "tray_launcher.py", "NTLAIT.spec", "agents.md",
+        "session-summary.md", "README.md", "settings.json",
+        "e2e.txt", "e2e_results.txt", "e2e_results_utf8.txt", "funcs.txt"
     }
     
     # We will explicitly add Global_Vault subdirectories manually as empty stubs
@@ -54,7 +55,7 @@ def create_release_build(root_dir: str):
                 ):
                     continue
                 
-                # Exclude any stale executables (like the old Antigravity.exe)
+                # Exclude any stale executables (like the old AetherVault.exe)
                 if file.endswith(".exe") and file != "Local AI Tool.exe":
                     continue
                     

@@ -1,0 +1,113 @@
+# AetherVault Architecture
+
+## Overview
+The AetherVault Generative AI Manager is the ultimate cross-platform orchestrator designed to solve fragmentation in the GenAI Ecosystem. It serves as a unified hub that automates runtimes, APIs, assets, and workflows, allowing users to drive multiple backends (ComfyUI, SD WebUI Forge, Automatic1111, Fooocus) from a single beautifully styled dashboard. It provides zero-friction inference, isolated app virtual environments, and unified 0-byte global asset sharing.
+
+## Key Features / User Flows
+- **[Zero-Friction Inference](features/zero_friction_inference.md):** Single monolithic dashboard driving generations across distinct backend engines using intelligent payload translators.
+- **[Global Vault System](features/global_vault_system.md):** Drop model weights once, use them everywhere natively without data duplication utilizing NTFS directory junctions and UNIX symlinks.
+- **[Agentic Model Meta-Scraping](features/agentic_model_meta_scraping.md):** Background crawlers index `Global_Vault/` files securely, align hashes against CivitAI, download metadata/thumbnails, and populate SQLite.
+- **[Studio Analytics](features/studio_analytics.md):** Persistent gallery ("My Creations") with canvas state restoration (seed, model, params) via simple drag-and-drop.
+- **[App Store & Isolation](features/app_store_isolation.md):** Config-driven `.json` installation with detached virtual environments ensuring strictly isolated PyTorch lifecycles.
+- **[OTA Ghost Upgrades](features/ota_ghost_upgrades.md):** Seamless background auto-updates of the UI/Backend without destroying isolated configs.
+
+## Architecture & Modules
+AetherVault operates through a cohesive **Three-Layer Agent Architecture** interacting with a simple, standard library Python backend ecosystem:
+
+1. **Directive Layer:** High-level project non-negotiables (Offline-first, 0 database loss, universal cross-platform parity, zero-dependency requirements).
+2. **Orchestration Layer:** Strict hierarchical agents (Architecture Guardian, QA Guardian, Safe Test Runner, Runtime Health Doctor, API Librarian) that validate changes and runtime health.
+3. **Execution Layer:** The application's technical boundaries:
+   - **Frontend:** Single monolithic `static/index.html` (vanilla JS, single file, instant runtime, no build compilation).
+   - **Backend Server:** `.backend/server.py` threading HTTP wrapper. Zero external pip dependencies.
+   - **Proxy Translators (`proxy_translators.py`):** Modulates and rewrites incoming unified schema into ComfyUI/Forge API specific payloads.
+   - **Vault & Embedding Crawlers (`vault_crawler.py` / `embedding_engine.py`):** Asynchronous hashing and sentence-transformer logic to keep SQLite semantic embeddings fresh natively.
+   - **Database (`metadata_db.py`):** Single-file thread-safe SQLite (WAL-mode) for all application configurations and tracking.
+   - **Symlink Manager (`symlink_manager.py`):** Abstracts cross-OS file mapping without admin rights.
+   - **QA Testing Pipeline:** Canonical test suites placed inside `.tests/`, executed via Playwright headless testing and Pytest boundaries (`requirements-qa.txt`). Legacy sprint-specific test files (`test_sprint8.py`, `test_sprint9.py`, `test_sprint10.py`) also reside in `.backend/`.
+
+### System Architecture Diagram
+
+```mermaid
+flowchart TD
+    subgraph Frontend["Frontend (Monolithic index.html)"]
+        UI["Vanilla JS Dashboard"]
+    end
+
+    subgraph Backend["Backend (.backend/)"]
+        Server["server.py<br/>ThreadingHTTPServer"]
+        Proxy["proxy_translators.py<br/>Payload Translation"]
+        DB["metadata_db.py<br/>SQLite WAL Mode"]
+        Crawler["vault_crawler.py<br/>Background Hashing"]
+        Embedding["embedding_engine.py<br/>Semantic Vectors"]
+        DL["download_engine.py<br/>Model Downloads"]
+        Import["import_engine.py<br/>Drag-and-Drop Imports"]
+        Symlink["symlink_manager.py<br/>Cross-Platform Links"]
+    end
+
+    subgraph Engines["Inference Engines (Subprocess Sandboxes)"]
+        ComfyUI["ComfyUI :8188"]
+        Forge["SD WebUI Forge :7860"]
+        A1111["Automatic1111 :7860"]
+        Fooocus["Fooocus :8888"]
+    end
+
+    subgraph Storage["Persistent Storage"]
+        SQLite["metadata.sqlite"]
+        Vault["Global_Vault/"]
+        Settings["settings.json"]
+    end
+
+    UI -->|"HTTP API"| Server
+    Server --> Proxy
+    Proxy -->|"JSON Graph"| ComfyUI
+    Proxy -->|"sdapi/v1"| Forge
+    Proxy -->|"sdapi/v1"| A1111
+    Proxy -->|"Fooocus API"| Fooocus
+    Server --> DB
+    DB --> SQLite
+    Crawler --> Vault
+    Crawler --> DB
+    Embedding --> DB
+    DL --> Vault
+    Import --> Vault
+    Import --> DB
+    Symlink --> Vault
+```
+
+## Data & Logic Flow
+1. **Startup:** `tray_launcher.py` and `start_manager` bash/batch scripts deploy the environment natively, instantiating portable Python and evaluating pre-flight sanity constraints (via `bootstrap.py` and the Runtime Doctor).
+2. **Proxy Request:** Client UI requests parameter generation targeting `ComfyUI` or similar engines.
+3. **Translation:** `server.py` hands data off to `proxy_translators.py` which unrolls the logic, maps Loras (via Global Vault tracking), and posts via API `urllib`.
+4. **Subprocess Management:** Engine processes are spawned using `subprocess.Popen` in isolated Process Groups (`CREATE_NEW_PROCESS_GROUP`).
+5. **Background Syncing:** As files are created or imported, `vault_crawler.py` and `embedding_engine.py` background-sync changes back to SQLite asynchronously.
+
+## Configuration Options
+- **`settings.json`:** Git-ignored file managing user-specific runtime states (e.g. selected models, engine paths, UI themes).
+- **`recipes/*.json`:** Blueprint wrappers defining how distinct generative apps should install, clone, and build their virtual environments securely.
+
+## Business Rules & Edge Cases
+- **No Data Loss:** `Global_Vault/`, `packages/`, and `metadata.sqlite` are explicitly Git-ignored and safeguarded to ensure user models are never flushed during Updates.
+- **PyTorch Isolation:** Applications within `packages/` cannot bleed dependencies; every repo utilizes its strictly locked `env/`.
+- **Offline First Approach:** UI, indexing, and base generation will always function securely without internet if cached locally. Networking dependencies simply enhance functionality (e.g. downloading CivitAI thumbnails or pulling OTA updates).
+
+## Related Files & Functions
+- **Application Server:** `.backend/server.py` — HTTP router with 45+ API endpoints, CORS handling, graceful teardown
+- **Proxy Translators:** `.backend/proxy_translators.py` — Engine-specific payload translation (ComfyUI JSON graphs, A1111/Forge sdapi)
+- **Symlinking & I/O:** `.backend/symlink_manager.py` — Cross-platform junction/symlink abstraction
+- **DB Interface:** `.backend/metadata_db.py` — SQLite CRUD with WAL mode and backward-compatible migrations
+- **Download Engine:** `.backend/download_engine.py` — CivitAI/HuggingFace model download pipeline with progress tracking
+- **Import Engine:** `.backend/import_engine.py` — Drag-and-drop model import with hashing, metadata lookup, and dependency extraction
+- **Vault Crawler:** `.backend/vault_crawler.py` — Background file indexing and SHA-256 hashing
+- **Embedding Engine:** `.backend/embedding_engine.py` — Sentence-transformer vector generation for semantic search
+- **CivitAI Client:** `.backend/civitai_client.py` — API client for model metadata and thumbnail retrieval
+- **HuggingFace Client:** `.backend/hf_client.py` — HuggingFace Hub search and download integration
+- **Installer Engine:** `.backend/installer_engine.py` — Recipe-driven app installation with isolated venvs
+- **Update Checker:** `.backend/update_checker.py` — Polls CivitAI for newer model versions
+- **OTA Updater:** `.backend/updater.py` — Ghost update pipeline for self-healing code patches
+- **Bootstrap:** `.backend/bootstrap.py` — First-run directory scaffold and database initialization
+- **System Tray:** `tray_launcher.py` — PyInstaller-bundled tray app with singleton mutex and process management
+- **Frontend Entry:** `.backend/static/index.html` — Monolithic vanilla JS/CSS/HTML dashboard
+- **Core Strategy Definitions:** `agents.md`, `.agent/rules/`
+
+## Observations / Notes
+- The "AetherVault" principles demand absolute zero-dependency Python engineering (`urllib`, `sqlite3`, `http.server`) to maintain a 0-friction deployment for end-users relying strictly on portable binary execution.

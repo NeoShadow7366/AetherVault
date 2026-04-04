@@ -11,7 +11,7 @@ The QA Guardian automated test suite experienced a critical 22+ minute deadlock.
 3. Thread `join()` and `while` loop operations lacked timeout bounds.
 4. End-to-End or API tests could spawn real or mocked Python subprocesses in `server.py` that outlived the test suite, causing zombie processes.
 
-Because this project strictly adheres to a zero-dependency, anti-gravity model, we cannot rely on tools like `pytest-timeout` to forcefully kill hanging tests. We must build resilience into our standard library usage.
+Because this project strictly adheres to a zero-dependency, AetherVault model, we cannot rely on tools like `pytest-timeout` to forcefully kill hanging tests. We must build resilience into our standard library usage.
 
 ## Decision
 We will enforce rigid bounds and explicit teardown across the test suite using only the Python standard library:

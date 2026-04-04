@@ -53,7 +53,7 @@ session-summary.md
 pending_work.md
 merged_walkthroughs.md
 
-# Keep the core Antigravity agent folders fully tracked
+# Keep the core AetherVault agent folders fully tracked
 !.agent/
 !.agents/
 !.github/

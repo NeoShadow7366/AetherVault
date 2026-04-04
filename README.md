@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="icons/Logo.ico" width="120" alt="Antigravity Logo" />
+  <img src="icons/Logo.ico" width="120" alt="AetherVault Logo" />
 </p>
 
-<h1 align="center">🌌 Antigravity — Generative AI Manager</h1>
+<h1 align="center">🌌 AetherVault — Generative AI Manager</h1>
 
 <p align="center">
   <strong>The ultimate cross-platform orchestrator that eliminates GenAI ecosystem fragmentation.</strong>
@@ -22,11 +22,11 @@
 
 ---
 
-## ✨ What Is Antigravity?
+## ✨ What Is AetherVault?
 
-Antigravity is a **self-contained, zero-dependency desktop application** that unifies the fragmented Generative AI ecosystem into a single dashboard. It manages multiple inference engines (ComfyUI, SD WebUI Forge, Automatic1111, Fooocus), shares models across all of them without duplicating a single byte, and automates metadata scraping, semantic search, downloads, and updates — all from one beautiful UI.
+AetherVault is a **self-contained, zero-dependency desktop application** that unifies the fragmented Generative AI ecosystem into a single dashboard. It manages multiple inference engines (ComfyUI, SD WebUI Forge, Automatic1111, Fooocus), shares models across all of them without duplicating a single byte, and automates metadata scraping, semantic search, downloads, and updates — all from one beautiful UI.
 
-**Core Philosophy — "Anti-Gravity":**  
+**Core Philosophy — "AetherVault":**  
 The entire backend runs on the **Python standard library only** (`http.server`, `sqlite3`, `urllib`, `subprocess`). No Flask. No Django. No Node.js. No build step. Just portable Python + a single `index.html`.
 
 ---
@@ -142,7 +142,7 @@ A polished PyInstaller-bundled desktop application with singleton mutex protecti
 
 ## 🏗️ Architecture
 
-Antigravity operates through a cohesive **Three-Layer Agent Architecture:**
+AetherVault operates through a cohesive **Three-Layer Agent Architecture:**
 
 | Layer | Purpose |
 |-------|---------|
@@ -242,10 +242,10 @@ The dashboard opens automatically at **http://localhost:8080**.
 ## 📁 Project Structure
 
 ```
-Antigravity/
+AetherVault/
 ├── agents.md                  ← AI agent architecture & coding standards
 ├── CHANGELOG.md               ← Semantic versioning release history
-├── CONTRIBUTING.md             ← Contribution guidelines & anti-gravity rules
+├── CONTRIBUTING.md             ← Contribution guidelines & AetherVault rules
 ├── tray_launcher.py           ← System tray desktop launcher
 │
 ├── .agents/skills/            ← 15 single-responsibility AI skill definitions
@@ -304,7 +304,7 @@ Antigravity/
 
 ## 📡 API Overview
 
-Antigravity exposes **45+ REST endpoints** on `http://localhost:8080`:
+AetherVault exposes **45+ REST endpoints** on `http://localhost:8080`:
 
 | Category | Endpoints | Description |
 |----------|-----------|-------------|
@@ -447,6 +447,6 @@ This project is under active development.
 ---
 
 <p align="center">
-  <sub>Built with the Anti-Gravity philosophy — zero external dependencies, maximum portability.</sub><br/>
+  <sub>Built with the AetherVault philosophy — zero external dependencies, maximum portability.</sub><br/>
   <sub>Python stdlib only* · Single-file frontend · Portable Python · Cross-platform parity</sub>
 </p>

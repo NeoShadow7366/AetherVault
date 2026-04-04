@@ -819,15 +819,15 @@
     <div id="lan-banner" class="lan-banner">⚠️ LAN Mode Active — Dashboard accessible to devices on your network at <span id="lan-ip-display">http://0.0.0.0:8080</span></div>
 
     <div class="sidebar">
-        <h2><img src="/icons/Logo.png" alt="Logo" style="width:28px; height:28px; vertical-align:middle; margin-right:8px; border-radius:4px;">AI Manager</h2>
-        <div class="nav-item" onclick="switchTab('dashboard', this)"><img src="/icons/Dashboard.png" alt="">Dashboard</div>
-        <div class="nav-item" onclick="switchTab('appstore', this)"><img src="/icons/App Store.png" alt="">App Store</div>
-        <div class="nav-item active" onclick="switchTab('explorer', this)"><img src="/icons/Model Explorer.png" alt="">Model Explorer</div>
-        <div class="nav-item" onclick="switchTab('inference', this)"><img src="/icons/Inference Studio.png" alt="">Inference Studio</div>
-        <div class="nav-item" onclick="switchTab('creations', this)"><img src="/icons/My Creations.png" alt="">My Creations</div>
-        <div class="nav-item" onclick="switchTab('packages', this)"><img src="/icons/Installed Packages.png" alt="">Installed Packages</div>
-        <div class="nav-item" onclick="switchTab('vault', this)"><img src="/icons/Global Vault.png" alt="">Global Vault</div>
-        <div class="nav-item" onclick="switchTab('settings', this)" style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 15px;"><img src="/icons/Settings.png" alt="">Settings</div>
+        <h2><img src="/icons/Logo.ico" alt="Logo" style="width:28px; height:28px; vertical-align:middle; margin-right:8px; border-radius:4px;">AI Manager</h2>
+        <div class="nav-item" onclick="switchTab('dashboard', this)"><img src="/icons/Dashboard.ico" alt="">Dashboard</div>
+        <div class="nav-item" onclick="switchTab('appstore', this)"><img src="/icons/App Store.ico" alt="">App Store</div>
+        <div class="nav-item active" onclick="switchTab('explorer', this)"><img src="/icons/Model Explorer.ico" alt="">Model Explorer</div>
+        <div class="nav-item" onclick="switchTab('inference', this)"><img src="/icons/Inference Studio.ico" alt="">Inference Studio</div>
+        <div class="nav-item" onclick="switchTab('creations', this)"><img src="/icons/My Creations.ico" alt="">My Creations</div>
+        <div class="nav-item" onclick="switchTab('packages', this)"><img src="/icons/Installed Packages.ico" alt="">Installed Packages</div>
+        <div class="nav-item" onclick="switchTab('vault', this)"><img src="/icons/Global Vault.ico" alt="">Global Vault</div>
+        <div class="nav-item" onclick="switchTab('settings', this)" style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 15px;"><img src="/icons/Settings.ico" alt="">Settings</div>
     </div>
 
     <div class="main-content">
@@ -1195,6 +1195,7 @@
                         <div style="text-align:center; color:var(--text-muted); font-size:0.8rem; margin-top:10px;" id="lb-download-meta"></div>
                     </div>
                     <div id="lb-actions-vault" style="display:none; gap:10px;">
+                        <button onclick="executeVaultRepair()" style="background:#f59e0b; color:#fff; border:none; padding:12px; border-radius:8px; font-weight:600; cursor:pointer;" title="Repair Metadata &amp; Images">Repair 🛠️</button>
                         <button onclick="executeVaultOpenFolder()" style="flex:1; background:var(--surface-hover); color:#fff; border:1px solid rgba(255,255,255,0.1); padding:12px; border-radius:8px; font-weight:600; cursor:pointer;">Open Folder</button>
                         <button onclick="executeVaultRedownload()" style="flex:1; background:var(--primary); color:#fff; border:none; padding:12px; border-radius:8px; font-weight:600; cursor:pointer;">Redownload</button>
                         <button onclick="executeVaultDelete()" style="background:#ef4444; color:#fff; border:none; padding:12px; border-radius:8px; font-weight:600; cursor:pointer;">Delete</button>
@@ -3206,6 +3207,21 @@
             } catch(e) {
                 alert("Server request failed");
             }
+        }
+
+        async function executeVaultRepair() {
+            if(!confirm(`Refresh metadata and preview image for ${window.currentVaultFilename}?`)) return;
+            try {
+                const res = await fetch('/api/vault/repair', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({filename: window.currentVaultFilename})
+                });
+                const response = await res.json();
+                if(response.status === 'success') {
+                    closeLightbox();
+                    loadModels();
+                } else alert("Repair failed: " + (response.message || "Unknown error"));
+            } catch(e) { alert("Failed to repair model"); }
         }
 
         async function executeVaultOpenFolder() {

@@ -106,7 +106,7 @@ class CivitaiClient:
                 # Make thumbnail path relative to root_dir if it exists to keep paths portable
                 if thumbnail_path:
                     try:
-                        thumbnail_path = os.path.relpath(thumbnail_path, self.root_dir)
+                        thumbnail_path = os.path.relpath(thumbnail_path, self.root_dir).replace('\\', '/')
                     except ValueError:
                         pass
                 
@@ -122,6 +122,34 @@ class CivitaiClient:
                 
             # Rate limiting
             time.sleep(1)
+
+    def repair_model_metadata(self, file_hash: str) -> bool:
+        logging.info(f"Manual repair triggered for hash [{file_hash[:8]}]")
+        metadata = self.fetch_model_by_hash(file_hash)
+        
+        if metadata:
+            thumbnail_path = None
+            if "images" in metadata and len(metadata["images"]) > 0:
+                image_url = metadata["images"][0].get("url")
+                if image_url:
+                    thumbnail_path = self.download_thumbnail(image_url, file_hash)
+            
+            if thumbnail_path:
+                try:
+                    thumbnail_path = os.path.relpath(thumbnail_path, self.root_dir).replace('\\', '/')
+                except ValueError:
+                    pass
+            
+            self.db.update_model_metadata(
+                file_hash=file_hash,
+                metadata_json=json.dumps(metadata),
+                thumbnail_path=thumbnail_path
+            )
+            logging.info(f"Successfully repaired metadata for {file_hash[:8]}.")
+            return True
+            
+        logging.warning(f"Repair failed: Could not fetch metadata for {file_hash[:8]}.")
+        return False
 
 if __name__ == "__main__":
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

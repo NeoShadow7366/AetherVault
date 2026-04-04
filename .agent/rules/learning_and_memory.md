@@ -22,7 +22,7 @@ When any agent identifies a recurring pattern, lesson, or improvement that shoul
 
 ## Risks Mitigated
 *   **Rule Bloat / Context Poisoning**: Prevents highly specific, transient fixes for edge cases from crystalizing into permanent rules that consume context limits and cause AI confusion.
-*   **Architectural Drift**: Prevents structural violations, particularly preserving the strict zero-dependency Anti-Gravity philosophy.
+*   **Architectural Drift**: Prevents structural violations, particularly preserving the strict zero-dependency AetherVault philosophy.
 *   **Escalation Deadlocks**: Resolves conflicts between guardians constantly reverting each other's changes by enforcing a clear hierarchy.
 *   **Uncontrolled "Learning"**: Ensures agents do not adapt behaviors that contradict core project principles without oversight.
 

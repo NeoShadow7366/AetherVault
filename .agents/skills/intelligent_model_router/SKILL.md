@@ -137,7 +137,7 @@ IF the active model is ABOVE the recommended tier:
 ```
 Output the recommendation in the exact format shown below.
 PAUSE all heavy work.
-WAIT for the user to confirm the switch in the Antigravity UI.
+WAIT for the user to confirm the switch in the AetherVault UI.
 Do NOT proceed until confirmation is received.
 ```
 
@@ -161,7 +161,7 @@ When recommending a model switch, output the following block:
 💡 Recommended: [exact model name, e.g., "Claude Opus 4.6 (Thinking)"]
 ⚡ Current:     [current model if known, else "Unknown"]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⏸️ ACTION: Please switch to [model name] in the Antigravity UI
+⏸️ ACTION: Please switch to [model name] in the AetherVault UI
            settings before proceeding. Confirm when ready.
 ```
 

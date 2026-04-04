@@ -27,7 +27,7 @@ The agent MUST:
   → Output the model recommendation in the standard format
      (see .agents/skills/intelligent_model_router/SKILL.md → Output Format)
   → Clearly state which model to switch to
-  → Clearly state where to switch (Antigravity UI → Model Selection)
+  → Clearly state where to switch (AetherVault UI → Model Selection)
   → Explain WHY the switch is needed (1-2 sentences)
 ```
 
