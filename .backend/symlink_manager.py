@@ -25,9 +25,14 @@ def create_safe_directory_link(source_dir: str, target_link: str) -> bool:
                 return True # Already linked correctly
             os.unlink(target_link) # Safe remove if incorrect
         elif os.path.isdir(target_link):
-            import shutil
+            # Safety: only remove empty real directories to avoid data loss
             try:
-                shutil.rmtree(target_link)
+                if not os.listdir(target_link):
+                    os.rmdir(target_link)
+                    logging.info(f"Removed empty conflicting directory at {target_link}")
+                else:
+                    logging.error(f"Conflict: Non-empty folder exists at {target_link}. Backing up is recommended before overwriting.")
+                    return False
             except Exception as e:
                 logging.error(f"Conflict: Real folder exists at {target_link} and cannot be removed: {e}")
                 return False

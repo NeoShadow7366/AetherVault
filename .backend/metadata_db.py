@@ -127,6 +127,16 @@ class MetadataDB:
         conn.close()
         return dict(row) if row else None
 
+    def get_model_by_filename(self, filename: str):
+        """Look up a model by filename. Returns the first match or None."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM models WHERE filename = ? LIMIT 1', (filename,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
     def get_all_filenames(self):
         """Returns a set of all tracked filenames to allow fast skips during crawling."""
         conn = sqlite3.connect(self.db_path)

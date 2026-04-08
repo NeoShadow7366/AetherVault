@@ -42,7 +42,7 @@ class CivitaiClient:
             
         return None
 
-    def download_thumbnail(self, image_url: str, file_hash: str) -> str:
+    def download_thumbnail(self, image_url: str, file_hash: str, force: bool = False) -> str:
         if not image_url:
             return None
             
@@ -53,8 +53,8 @@ class CivitaiClient:
         filename = f"{file_hash}.{ext}"
         filepath = os.path.join(self.thumbnails_dir, filename)
         
-        # Don't re-download if it already exists
-        if os.path.exists(filepath):
+        # Don't re-download if it already exists (unless force=True for repairs)
+        if not force and os.path.exists(filepath):
             return filepath
             
         req = urllib.request.Request(image_url, headers=self.headers)
@@ -68,7 +68,7 @@ class CivitaiClient:
             logging.error(f"Failed to download thumbnail from {image_url}: {e}")
             if os.path.exists(filepath):
                 try: os.remove(filepath)
-                except: pass
+                except OSError: pass
             return None
 
     def process_unpopulated_models(self):
@@ -98,8 +98,18 @@ class CivitaiClient:
                 thumbnail_path = None
                 
                 # 2. Extract and download preview image if available
+                #    Prefer static images over videos (videos can be 40MB+ and don't render as img tags)
                 if "images" in metadata and len(metadata["images"]) > 0:
-                    image_url = metadata["images"][0].get("url")
+                    image_url = None
+                    # First pass: find first static image
+                    for img_entry in metadata["images"]:
+                        if img_entry.get("type", "image") != "video":
+                            image_url = img_entry.get("url")
+                            if image_url:
+                                break
+                    # Fallback: use first video thumbnail if no static images
+                    if not image_url:
+                        image_url = metadata["images"][0].get("url")
                     if image_url:
                         thumbnail_path = self.download_thumbnail(image_url, file_hash)
                         
@@ -130,9 +140,23 @@ class CivitaiClient:
         if metadata:
             thumbnail_path = None
             if "images" in metadata and len(metadata["images"]) > 0:
-                image_url = metadata["images"][0].get("url")
+                image_url = None
+                # Prefer static images over videos
+                for img_entry in metadata["images"]:
+                    if img_entry.get("type", "image") != "video":
+                        image_url = img_entry.get("url")
+                        if image_url:
+                            break
+                if not image_url:
+                    image_url = metadata["images"][0].get("url")
                 if image_url:
-                    thumbnail_path = self.download_thumbnail(image_url, file_hash)
+                    # Delete old cached thumbnail so we get a fresh one
+                    for ext in ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'gif']:
+                        old_path = os.path.join(self.thumbnails_dir, f"{file_hash}.{ext}")
+                        if os.path.exists(old_path):
+                            try: os.remove(old_path)
+                            except OSError: pass
+                    thumbnail_path = self.download_thumbnail(image_url, file_hash, force=True)
             
             if thumbnail_path:
                 try:

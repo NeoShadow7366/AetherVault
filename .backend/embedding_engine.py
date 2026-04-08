@@ -85,7 +85,7 @@ class EmbeddingEngine:
                 continue
                 
         results.sort(reverse=True, key=lambda x: x[0])
-        # Return tuples of (hash, score)
+        # Return tuples of (score, file_hash)
         return results[:top_k]
 
 if __name__ == "__main__":

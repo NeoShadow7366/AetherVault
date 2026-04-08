@@ -22,7 +22,7 @@ class Downloader:
         try:
             with open(self.status_file, "r") as f:
                 return json.load(f)
-        except:
+        except (json.JSONDecodeError, ValueError):
             return {}
 
     def _write_status(self, data):
@@ -98,7 +98,7 @@ class Downloader:
                             })
                             last_update_time = now
 
-            self.update_job(job_id, {"status": "completed", "progress": 100})
+            self.update_job(job_id, {"status": "completed", "progress": 100, "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
             logging.info(f"Successfully downloaded {filename} to {target_path}")
 
             # Trigger Vault Crawler to sync new files to SQLite
@@ -115,9 +115,18 @@ class Downloader:
             except Exception as crawl_err:
                 logging.error(f"Failed to spawn vault crawler: {crawl_err}")
 
+        except urllib.error.HTTPError as http_err:
+            if http_err.code == 401:
+                msg = "CivitAI requires login for this model. Add your CivitAI API key in Settings to download it."
+            elif http_err.code == 403:
+                msg = "Access denied. This model version may require early access purchase on CivitAI."
+            else:
+                msg = f"HTTP Error {http_err.code}: {http_err.reason}"
+            logging.error(f"Download failed for {filename}: {msg}")
+            self.update_job(job_id, {"status": "error", "message": msg, "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
         except Exception as e:
             logging.error(f"Download failed for {filename}: {e}")
-            self.update_job(job_id, {"status": "error", "message": str(e)})
+            self.update_job(job_id, {"status": "error", "message": str(e), "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
 
 
 if __name__ == "__main__":

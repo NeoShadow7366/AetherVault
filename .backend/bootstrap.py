@@ -12,7 +12,8 @@ def main():
     # Initialize all Global Vault subdirectories
     vault_dirs = [
         "checkpoints", "loras", "vaes", "controlnet",
-        "unet", "clip", "text_encoders", "embeddings", "misc"
+        "unet", "clip", "text_encoders", "embeddings",
+        "upscalers", "motion", "hypernetworks", "misc"
     ]
     for d in vault_dirs:
         target_dir = os.path.join(root_dir, "Global_Vault", d)

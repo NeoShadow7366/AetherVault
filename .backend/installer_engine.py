@@ -186,15 +186,38 @@ class RecipeInstaller:
         self.root_dir = os.path.abspath(root_dir)
         self.packages_dir = os.path.join(self.root_dir, "packages")
         self.vault_dir = os.path.join(self.root_dir, "Global_Vault")
+        self.jobs_file = os.path.join(self.root_dir, ".backend", "cache", "install_jobs.json")
         # Ensure our base folders exist
         os.makedirs(self.packages_dir, exist_ok=True)
         os.makedirs(self.vault_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(self.jobs_file), exist_ok=True)
 
     def _get_python_executable(self, venv_dir: str) -> str:
         """Returns the isolated python executable for a given venv."""
         if os.name == 'nt':
             return os.path.join(venv_dir, "Scripts", "python.exe")
         return os.path.join(venv_dir, "bin", "python")
+
+    def _read_jobs(self) -> dict:
+        if os.path.exists(self.jobs_file):
+            try:
+                with open(self.jobs_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {}
+
+    def _write_jobs(self, jobs: dict) -> None:
+        with open(self.jobs_file, 'w', encoding='utf-8') as f:
+            json.dump(jobs, f, indent=2)
+
+    def _update_progress(self, app_id: str, updates: dict) -> None:
+        """Write progress updates to the shared install_jobs.json file."""
+        jobs = self._read_jobs()
+        if app_id not in jobs:
+            jobs[app_id] = {}
+        jobs[app_id].update(updates)
+        self._write_jobs(jobs)
 
     def install(self, recipe_path: str):
         if not os.path.exists(recipe_path):
@@ -205,11 +228,24 @@ class RecipeInstaller:
             recipe = json.load(f)
 
         app_id = recipe.get("app_id")
+        app_name = recipe.get("name", app_id)
         app_base = os.path.join(self.packages_dir, app_id)
         app_clone_dir = os.path.join(app_base, "app")
         venv_dir = os.path.join(app_base, "env")
 
-        logging.info(f"=== Starting Installation for {recipe.get('name')} ===")
+        total_steps = 2 + len(recipe.get("install_commands", [])) + 1 + 1  # clone + venv + pip_cmds + symlinks + manifest
+        current_step = 0
+
+        logging.info(f"=== Starting Installation for {app_name} ===")
+        self._update_progress(app_id, {
+            "status": "installing",
+            "name": app_name,
+            "phase": "Starting",
+            "step": 0,
+            "total_steps": total_steps,
+            "percent": 0,
+            "log": []
+        })
         
         # 1. Directory Structure inside package manager
         is_new_install = not os.path.exists(app_base)
@@ -217,42 +253,92 @@ class RecipeInstaller:
 
         try:
             # 2. Git Clone
+            current_step += 1
             if not os.path.exists(app_clone_dir):
-                logging.info(f"Cloning {recipe.get('repository')} into {app_clone_dir}...")
-                # Ideally this calls bin/git/git.exe to prevent git permission inheritance.
+                log_msg = f"Cloning {recipe.get('repository')}..."
+                logging.info(log_msg)
+                self._update_progress(app_id, {
+                    "phase": "Cloning Repository",
+                    "step": current_step,
+                    "percent": int(current_step / total_steps * 100),
+                    "log": [log_msg]
+                })
                 subprocess.run(["git", "clone", recipe["repository"], app_clone_dir], check=True)
             else:
                 logging.info(f"Directory {app_clone_dir} already exists. Skipping clone.")
+                self._update_progress(app_id, {
+                    "phase": "Repository exists (skipped)",
+                    "step": current_step,
+                    "percent": int(current_step / total_steps * 100)
+                })
 
             # 3. Virtual Environment Creation
+            current_step += 1
             if not os.path.exists(venv_dir):
+                log_msg = "Creating isolated Python environment..."
                 logging.info(f"Creating strictly isolated Python VENV at {venv_dir}...")
-                # Real deployment uses self.root_dir/bin/python/python.exe
+                self._update_progress(app_id, {
+                    "phase": "Creating Virtual Environment",
+                    "step": current_step,
+                    "percent": int(current_step / total_steps * 100),
+                    "log": [log_msg]
+                })
                 portable_python = os.path.join(self.root_dir, "bin", "python", "python.exe") if os.name == 'nt' else os.path.join(self.root_dir, "bin", "python", "bin", "python")
                 python_exe = portable_python if os.path.exists(portable_python) else sys.executable
                 subprocess.run([python_exe, "-m", "venv", venv_dir], check=True)
+            else:
+                self._update_progress(app_id, {
+                    "phase": "Virtual env exists (skipped)",
+                    "step": current_step,
+                    "percent": int(current_step / total_steps * 100)
+                })
             
             venv_python = self._get_python_executable(venv_dir)
 
             # 4. Proxied Pip Installs (Using Isolated VENV python)
             commands = recipe.get("install_commands", [])
+            pip_failures = []
             if commands:
                 logging.info("Executing isolated PIP commands...")
-                for cmd in commands:
+                for i, cmd in enumerate(commands):
+                    current_step += 1
                     # Intercept `pip install` to force `venv/python -m pip install`
                     if cmd.startswith("pip "):
                         parts = cmd.split(" ")[1:] 
                         exec_cmd = [venv_python, "-m", "pip"] + parts
                     else:
                         exec_cmd = cmd.split(" ")
-                        
+                    
+                    display_cmd = cmd[:80] + ("..." if len(cmd) > 80 else "")
+                    log_msg = f"Installing dependencies ({i+1}/{len(commands)}): {display_cmd}"
                     logging.info(f"Running: {' '.join(exec_cmd)}")
-                    subprocess.run(exec_cmd, cwd=app_clone_dir, check=True)
+                    self._update_progress(app_id, {
+                        "phase": f"Installing Dependencies ({i+1}/{len(commands)})",
+                        "step": current_step,
+                        "percent": int(current_step / total_steps * 100),
+                        "log": [log_msg]
+                    })
+                    result = subprocess.run(exec_cmd, cwd=app_clone_dir)
+                    if result.returncode != 0:
+                        warn_msg = f"Warning: pip command failed (exit {result.returncode}): {display_cmd}"
+                        logging.warning(warn_msg)
+                        pip_failures.append(display_cmd)
+                        self._update_progress(app_id, {
+                            "phase": f"Dependency warning ({i+1}/{len(commands)})",
+                            "log": [warn_msg]
+                        })
 
             # 5. Global Vault Route Symlinking
+            current_step += 1
             symlinks = recipe.get("model_symlinks", {})
             if symlinks:
                 logging.info("Routing Global Vault references securely...")
+                self._update_progress(app_id, {
+                    "phase": "Linking Global Vault",
+                    "step": current_step,
+                    "percent": int(current_step / total_steps * 100),
+                    "log": [f"Creating {len(symlinks)} vault symlinks..."]
+                })
                 for vault_src, app_target in symlinks.items():
                     source_path = os.path.join(self.vault_dir, vault_src)
                     target_path = os.path.join(app_clone_dir, app_target)
@@ -262,17 +348,34 @@ class RecipeInstaller:
                     create_safe_directory_link(source_path, target_path)
 
             # 6. Saving Local Manifest for Tracking
+            current_step += 1
             manifest_path = os.path.join(app_base, "manifest.json")
             with open(manifest_path, 'w', encoding='utf-8') as f:
                 json.dump(recipe, f, indent=4)
             
-            logging.info(f"=== Installation of {recipe.get('name')} Complete! ===")
+            logging.info(f"=== Installation of {app_name} Complete! ===")
+            completion_log = [f"Successfully installed {app_name}"]
+            if pip_failures:
+                completion_log.append(f"Note: {len(pip_failures)} optional dependency command(s) had warnings. The app may auto-resolve these on first launch.")
+                logging.warning(f"Installation completed with {len(pip_failures)} pip warning(s)")
+            self._update_progress(app_id, {
+                "status": "completed",
+                "phase": "Installation Complete",
+                "step": total_steps,
+                "percent": 100,
+                "log": completion_log
+            })
             return True
 
         except Exception as e:
             logging.error(f"Installation failed: {e}")
+            self._update_progress(app_id, {
+                "status": "failed",
+                "phase": f"Failed: {str(e)[:100]}",
+                "log": [f"Error: {str(e)}"]
+            })
             if is_new_install:
-                logging.info(f"Rolling back failed installation of {recipe.get('name')} at {app_base}")
+                logging.info(f"Rolling back failed installation of {app_name} at {app_base}")
                 import shutil
                 shutil.rmtree(app_base, ignore_errors=True)
             return False

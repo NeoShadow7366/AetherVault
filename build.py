@@ -71,8 +71,12 @@ def create_release_build(root_dir: str):
             "Global_Vault/controlnet/",
             "Global_Vault/unet/",
             "Global_Vault/clip/",
-            "Global_Vault/upscaler/",
+            "Global_Vault/text_encoders/",
+            "Global_Vault/embeddings/",
+            "Global_Vault/upscalers/",
             "Global_Vault/motion/",
+            "Global_Vault/hypernetworks/",
+            "Global_Vault/misc/",
         ]
         
         for folder in vault_folders:
@@ -85,5 +89,5 @@ def create_release_build(root_dir: str):
     logging.info("Build payload compiled successfully.")
     
 if __name__ == "__main__":
-    rood_path = os.path.dirname(os.path.abspath(__file__))
-    create_release_build(rood_path)
+    root_path = os.path.dirname(os.path.abspath(__file__))
+    create_release_build(root_path)

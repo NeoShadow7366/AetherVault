@@ -19,7 +19,7 @@ if not exist "%PYTHON_DIR%\python.exe" (
     tar -xf "%BIN_DIR%\python.tar.gz" -C "%BIN_DIR%"
     del "%BIN_DIR%\python.tar.gz"
     echo Python installed successfully.
-    echo [2/4] Installing semantic search dependencies (this may take a moment)...
+    echo [2/3] Installing semantic search dependencies (this may take a moment)...
     "%PYTHON_DIR%\python.exe" -m pip install --upgrade pip setuptools wheel
     "%PYTHON_DIR%\python.exe" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
     "%PYTHON_DIR%\python.exe" -m pip install sentence-transformers

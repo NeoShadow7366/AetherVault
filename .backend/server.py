@@ -8,6 +8,7 @@ import signal
 import time
 import uuid
 import threading
+import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -16,6 +17,11 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 # ── Server State Globals ─────────────────────────────────────────
 global_http_server = None
 embedding_process = None
+
+# ── CivitAI MeiliSearch Public API Key ───────────────────────────
+# This is CivitAI's public search key embedded in their web frontend.
+# Override via settings.json "civitai_search_key" if rotated.
+_CIVITAI_SEARCH_KEY = "8c46eb2508e21db1e9828a97968d91ab1ca1caa5f70a00e88a2ba1e286603b61"
 
 def graceful_teardown():
     """Fixed: synchronous, kills sandboxes properly, no NameError"""
@@ -39,7 +45,8 @@ def graceful_teardown():
     print("[TEARDOWN] Terminating sandbox engines...")
     sys.stdout.flush()
     try:
-        for package_id, proc in list(AIWebServer.running_processes.items()):
+        for package_id, entry in list(AIWebServer.running_processes.items()):
+            proc = entry.get("process") if isinstance(entry, dict) else entry
             if proc and proc.poll() is None:
                 print(f"[TEARDOWN] Killing sandbox '{package_id}' (PID {proc.pid})")
                 sys.stdout.flush()
@@ -101,8 +108,9 @@ _batch_queue = []  # list of {id, status, payload, result, error}
 _batch_lock = threading.Lock()
 _batch_worker_running = False
 
-# ── Phase 5: Civitai Search Cache ──────────────────────────────────
+# ── Phase 5: Civitai Search Cache (max 200 entries) ───────────
 _civitai_search_cache = {}  # dict of { cache_key: { "timestamp": float, "data": list } }
+_CIVITAI_CACHE_MAX = 200
 
 class AIWebServer(BaseHTTPRequestHandler):
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -130,14 +138,12 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_api_packages()
         elif path == "/api/recipes":
             self.send_api_recipes()
+        elif path == "/api/install/status":
+            self.handle_install_status()
         elif path == "/api/downloads":
             self.handle_get_downloads()
         elif path == "/api/comfy_image":
             self.handle_comfy_image()
-        elif path == "/api/comfy_upload":
-            self.handle_comfy_upload()
-        elif path == "/api/stop":
-            self.handle_stop()
         elif path == "/api/import/status":
             self.handle_import_status()
         elif path == "/api/import/jobs":
@@ -210,6 +216,8 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.handle_repair_dependency(data)
         elif path == "/api/stop":
             self.handle_stop(data)
+        elif path == "/api/comfy_upload":
+            self.handle_comfy_upload()
         elif path == "/api/uninstall":
             self.handle_uninstall(data)
         elif path == "/api/download":
@@ -295,9 +303,9 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_error(403, "Forbidden")
             return
             
-        # Serve root UI logo
+        # Serve root UI logo (redirect legacy path to icons/)
         if path == "/Logo.ico":
-            filepath = os.path.join(self.root_dir, "Logo.ico")
+            filepath = os.path.join(self.root_dir, "icons", "Logo.ico")
         # Serve custom user icons
         elif path.startswith("/icons/"):
             import urllib.parse
@@ -377,9 +385,20 @@ class AIWebServer(BaseHTTPRequestHandler):
                 payload["queries"][0]["filter"] = " AND ".join(filters)
             
             url = "https://search-new.civitai.com/multi-search"
+            # Load override key from settings if available
+            search_key = _CIVITAI_SEARCH_KEY
+            try:
+                settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
+                if os.path.exists(settings_path):
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        _s = json.load(f)
+                        search_key = _s.get("civitai_search_key", search_key)
+            except Exception:
+                pass
+
             headers = {
                 "Content-Type": "application/json",
-                "Authorization": "Bearer 8c46eb2508e21db1e9828a97968d91ab1ca1caa5f70a00e88a2ba1e286603b61",
+                "Authorization": f"Bearer {search_key}",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Referer": "https://civitai.com/",
                 "Origin": "https://civitai.com"
@@ -410,6 +429,13 @@ class AIWebServer(BaseHTTPRequestHandler):
                         "type": img.get("type", "image")
                     })
                 
+                version_id = version.get("id")
+                download_url = f"https://civitai.com/api/download/models/{version_id}" if version_id else None
+                
+                # Extract real file info from hashes/version if available
+                version_hashes = h.get("hashes", [])
+                file_name = version.get("fileName") or f"{h.get('name', 'ModelFile')}.safetensors"
+
                 v1_item = {
                     "id": h.get("id"),
                     "name": h.get("name"),
@@ -420,8 +446,17 @@ class AIWebServer(BaseHTTPRequestHandler):
                     "modelVersions": [{
                         "name": version.get("name", "Base"),
                         "baseModel": version.get("baseModel", "Unknown"),
+                        "availability": version.get("availability") or h.get("availability", "Public"),
+                        "earlyAccessEndsAt": version.get("earlyAccessEndsAt") or h.get("earlyAccessDeadline"),
+                        "earlyAccessTimeFrame": version.get("earlyAccessTimeFrame", 0),
                         "images": mapped_imgs,
-                        "files": [{"sizeKB": 0, "name": "ModelFile", "type": "Model", "primary": True}],
+                        "files": [{
+                            "sizeKB": version.get("fileSizeKB", 0),
+                            "name": file_name,
+                            "type": "Model",
+                            "primary": True,
+                            "downloadUrl": download_url
+                        }],
                         "trainedWords": h.get("triggerWords", [])
                     }],
                     "tags": h.get("tags", [])
@@ -429,6 +464,10 @@ class AIWebServer(BaseHTTPRequestHandler):
                 items.append(v1_item)
                 
             _civitai_search_cache[cache_key] = {"timestamp": now, "data": items}
+            # Evict oldest entries if cache exceeds max size
+            if len(_civitai_search_cache) > _CIVITAI_CACHE_MAX:
+                oldest_key = min(_civitai_search_cache, key=lambda k: _civitai_search_cache[k]["timestamp"])
+                del _civitai_search_cache[oldest_key]
             self.send_json_response({"items": items})
         except Exception as e:
             logging.error(f"Target CivitAI proxy search failed: {e}")
@@ -515,12 +554,19 @@ class AIWebServer(BaseHTTPRequestHandler):
                             logging.warning(f"Failed to read manifest for {d}: {e}")
                     
                     # Add running status by evaluating process handle
-                    proc = AIWebServer.running_processes.get(d)
+                    entry = AIWebServer.running_processes.get(d)
+                    proc = entry.get("process") if isinstance(entry, dict) else entry
                     if proc and proc.poll() is None:
                         pkg_info["is_running"] = True
                     else:
                         pkg_info["is_running"] = False
-                        if proc:
+                        if entry:
+                            # Close leaked log file handle if present
+                            if isinstance(entry, dict) and entry.get("log_file"):
+                                try:
+                                    entry["log_file"].close()
+                                except Exception:
+                                    pass
                             del AIWebServer.running_processes[d]
 
                     packages.append(pkg_info)
@@ -546,6 +592,19 @@ class AIWebServer(BaseHTTPRequestHandler):
                         logging.error(f"Error reading recipe {file}: {e}")
                         
         self.send_json_response({"status": "success", "recipes": recipes})
+
+    def handle_install_status(self):
+        """Returns current installation progress for all install jobs."""
+        jobs_file = os.path.join(self.root_dir, ".backend", "cache", "install_jobs.json")
+        try:
+            if os.path.exists(jobs_file):
+                with open(jobs_file, 'r', encoding='utf-8') as f:
+                    jobs = json.load(f)
+                self.send_json_response({"status": "success", "jobs": jobs})
+            else:
+                self.send_json_response({"status": "success", "jobs": {}})
+        except Exception as e:
+            self.send_json_response({"status": "error", "message": str(e), "jobs": {}}, 500)
 
     def handle_build_recipe(self, data):
         app_id = data.get("app_id")
@@ -689,12 +748,12 @@ class AIWebServer(BaseHTTPRequestHandler):
             kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 512)
             
         p = subprocess.Popen(full_command, cwd=app_path, stdout=log_file, stderr=subprocess.STDOUT, **kwargs)
-        AIWebServer.running_processes[package_id] = p
+        AIWebServer.running_processes[package_id] = {"process": p, "log_file": log_file}
         
         ports = {
             "comfyui": "8188",
             "forge": "7860",
-            "a1111": "7860",
+            "auto1111": "7861",
             "fooocus": "8888"
         }
         url = f"http://127.0.0.1:{ports.get(package_id, '7860')}"
@@ -737,22 +796,24 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": f"Repair failed: {str(e)}"}, 500)
 
     def handle_stop(self, data=None):
-        if hasattr(self, 'path') and getattr(self, 'command', '') == 'GET':
-            # Handle GET requests if applicable (using query string)
-            parsed = urlparse(self.path)
-            qs = parse_qs(parsed.query)
-            package_id = qs.get("package_id", [""])[0]
-        else:
-            package_id = data.get("package_id") if data else None
+        package_id = data.get("package_id") if data else None
             
         if not package_id:
             self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
             return
 
-        p = AIWebServer.running_processes.get(package_id)
-        if not p:
+        entry = AIWebServer.running_processes.get(package_id)
+        if not entry:
             self.send_json_response({"status": "error", "message": "Package not running or not tracked"}, 404)
             return
+
+        # Support both old dict format and legacy bare process objects
+        if isinstance(entry, dict):
+            p = entry.get("process")
+            log_file = entry.get("log_file")
+        else:
+            p = entry
+            log_file = None
 
         logging.info(f"Terminating package {package_id} (PID: {p.pid})...")
         try:
@@ -769,6 +830,13 @@ class AIWebServer(BaseHTTPRequestHandler):
             logging.error(f"Error stopping package {package_id}: {e}")
             self.send_json_response({"status": "error", "message": str(e)}, 500)
             return
+
+        # Close the log file handle to prevent leaks
+        if log_file:
+            try:
+                log_file.close()
+            except Exception:
+                pass
             
         del AIWebServer.running_processes[package_id]
         self.send_json_response({"status": "success", "message": "Package stopped successfully"})
@@ -925,24 +993,78 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
     def handle_vault_health_check(self, data):
-        # A lightweight immediate check of the vault packages symlinks and missing thumbnails
+        """Checks vault symlinks/junctions in installed packages for broken targets."""
         broken_links = 0
         packages_dir = os.path.join(self.root_dir, "packages")
         
         if os.path.exists(packages_dir):
             for d in os.listdir(packages_dir):
                 pkg_models = os.path.join(packages_dir, d, "models")
-                if os.path.exists(pkg_models):
-                    for src_dir, dirs, files in os.walk(pkg_models):
-                        for f in files:
-                            p = os.path.join(src_dir, f)
-                            if os.path.islink(p) and not os.path.exists(os.readlink(p)):
-                                try:
-                                    os.unlink(p)
-                                    broken_links += 1
-                                except: pass
+                if not os.path.exists(pkg_models):
+                    continue
+                for entry in os.listdir(pkg_models):
+                    target = os.path.join(pkg_models, entry)
+                    is_link = False
+                    # os.path.islink() returns False for NTFS junctions on Windows.
+                    # Detect both symlinks and junctions via os.readlink().
+                    try:
+                        link_target = os.readlink(target)
+                        is_link = True
+                        if not os.path.exists(link_target):
+                            try:
+                                os.unlink(target)
+                                broken_links += 1
+                                logging.info(f"Removed broken link: {target} -> {link_target}")
+                            except OSError as e:
+                                logging.warning(f"Failed to unlink broken link {target}: {e}")
+                    except (OSError, ValueError):
+                        pass  # Not a link/junction — skip
                                 
-        self.send_json_response({"status": "success", "message": f"Repaired {broken_links} broken symlinks in packages."})
+        self.send_json_response({"status": "success", "message": f"Repaired {broken_links} broken symlinks/junctions in packages."})
+
+    def handle_vault_repair(self, data):
+        """POST /api/vault/repair — re-fetch metadata + thumbnails for a model.
+        Accepts file_hash directly, or falls back to filename-based lookup."""
+        file_hash = data.get("file_hash")
+        filename = data.get("filename")
+        
+        try:
+            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
+            from civitai_client import CivitaiClient
+            from metadata_db import MetadataDB
+            
+            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+            
+            # Resolve file_hash from filename if not directly provided
+            if not file_hash and filename:
+                model = db.get_model_by_filename(filename)
+                if model:
+                    file_hash = model.get("file_hash")
+            
+            if not file_hash:
+                self.send_json_response({"status": "error", "message": "Could not resolve model. Provide file_hash or a valid filename."}, 400)
+                return
+            
+            client = CivitaiClient(self.root_dir)
+            
+            # Apply user's CivitAI API key if configured
+            settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
+            if os.path.exists(settings_path):
+                try:
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        api_key = json.load(f).get("civitai_api_key", "")
+                    if api_key:
+                        client.headers["Authorization"] = f"Bearer {api_key}"
+                except Exception:
+                    pass
+            
+            success = client.repair_model_metadata(file_hash)
+            if success:
+                self.send_json_response({"status": "success", "message": "Metadata and thumbnail refreshed successfully."})
+            else:
+                self.send_json_response({"status": "error", "message": "Could not fetch metadata from CivitAI for this model. It may be a local-only model."}, 404)
+        except Exception as e:
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
 
     def handle_get_settings(self):
         settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
@@ -1196,9 +1318,15 @@ class AIWebServer(BaseHTTPRequestHandler):
                 rows = db.list_generations(sort=sort)
                 
             # Self-heal: Drop missing files seamlessly
+            # Note: image_path can be a base64 data URI, /api/ URL, or HTTP link.
             valid_rows = []
             for r in rows:
-                if os.path.exists(r.get("image_path", "")):
+                img_path = r.get("image_path", "")
+                if not img_path:
+                    db.delete_generation(r.get("id"))
+                elif img_path.startswith("data:") or img_path.startswith("http://") or img_path.startswith("https://") or img_path.startswith("/api/"):
+                    valid_rows.append(r)
+                elif os.path.exists(img_path):
                     valid_rows.append(r)
                 else:
                     db.delete_generation(r.get("id"))
@@ -1315,7 +1443,8 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             err_msg = str(e)
             if "Connection refused" in err_msg or "WinError 10061" in err_msg or "RemoteDisconnected" in err_msg:
-                p = AIWebServer.running_processes.get("comfyui")
+                entry = AIWebServer.running_processes.get("comfyui")
+                p = entry.get("process") if isinstance(entry, dict) else entry
                 if p and p.poll() is not None:
                     # Process died quietly. Parse logs.
                     log_path = os.path.join(self.root_dir, "packages", "comfyui", "runtime.log")
@@ -1394,7 +1523,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                 return
                 
         import urllib.request
-        url = f"http://127.0.0.1:7860{endpoint}"
+        url = f"http://127.0.0.1:7861{endpoint}"
         try:
             if payload:
                 req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
@@ -1422,7 +1551,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                 return
                 
         import urllib.request
-        url = f"http://127.0.0.1:7861{endpoint}"
+        url = f"http://127.0.0.1:7860{endpoint}"
         try:
             if payload:
                 req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
@@ -1476,7 +1605,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             if os.path.exists(settings_path):
                 with open(settings_path, 'r') as f:
                     try: settings = json.load(f)
-                    except: pass
+                    except (json.JSONDecodeError, ValueError): pass
             settings["activity_cleared_at"] = time.time()
             with open(settings_path, 'w') as f:
                 json.dump(settings, f, indent=4)
@@ -1742,15 +1871,19 @@ class AIWebServer(BaseHTTPRequestHandler):
                     completed.sort(key=lambda x: x.get("completed_at", ""), reverse=True)
                     recent_downloads = completed[:5]
             
-            # LAN sharing status
+            # Load settings once for LAN sharing + disk warning + activity clear
             settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
-            lan_sharing = False
+            settings_data = {}
             if os.path.exists(settings_path):
                 try:
-                    with open(settings_path, 'r') as f:
-                        lan_sharing = json.load(f).get("lan_sharing", False)
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        settings_data = json.load(f)
                 except (json.JSONDecodeError, OSError):
                     pass
+
+            lan_sharing = settings_data.get("lan_sharing", False)
+            vault_size_warning_gb = settings_data.get('vault_size_warning_gb', 50)
+            activity_cleared_at = settings_data.get('activity_cleared_at', 0)
 
             lan_ip = ""
             if lan_sharing:
@@ -1786,22 +1919,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                 installed_packages = sum(1 for d in os.listdir(packages_dir) if os.path.isdir(os.path.join(packages_dir, d)))
             running_packages = len(AIWebServer.running_processes)
 
-            # Sprint 10: Settings Data (Disk warning, Activity Feed Clear)
-            settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
-            settings_data = {}
-            vault_size_warning_gb = 50  # default
-            activity_cleared_at = 0
-            if os.path.exists(settings_path):
-                try:
-                    with open(settings_path, 'r') as f:
-                        settings_data = json.load(f)
-                    vault_size_warning_gb = settings_data.get('vault_size_warning_gb', 50)
-                    activity_cleared_at = settings_data.get('activity_cleared_at', 0)
-                except (json.JSONDecodeError, OSError):
-                    pass
-
             # Sprint 9: Recent activity + category distribution
-            import datetime
             raw_generations = db.get_recent_activity(limit=5)
             recent_generations = []
             for g in raw_generations:
@@ -2092,20 +2210,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         })
 
 
-import os
-import sys
-import threading
-import subprocess
 
-# Global pointer for the embedding engine (declared at module level)
-embedding_process = None
-
-
-# Global pointer for the embedding engine
-embedding_process = None
-
-# Global pointer for embedding engine
-embedding_process = None
 
 def start_background_scanners():
     """Starts background scanners and embedding engine"""

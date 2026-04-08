@@ -21,10 +21,7 @@ if [ ! -f "$PYTHON_EXE" ]; then
     fi
 fi
 
-echo "[1/2] Launching semantic search background indexer..."
-nohup "$PYTHON_EXE" "$ROOT_DIR/.backend/embedding_engine.py" > /dev/null 2>&1 &
-
-echo "[2/2] Launching local Web Dashboard..."
+echo "[1/2] Launching local Web Dashboard..."
 # Cross-platform default browser launch
 if command -v xdg-open > /dev/null; then
   xdg-open "http://localhost:8080"
@@ -32,6 +29,6 @@ elif command -v open > /dev/null; then
   open "http://localhost:8080"
 fi
 
-echo "Server is active and background scanners are running..."
+echo "[2/2] Starting server (embedding engine launches automatically)..."
 echo "Please keep this window open to serve UI packages!"
 "$PYTHON_EXE" "$ROOT_DIR/.backend/server.py"

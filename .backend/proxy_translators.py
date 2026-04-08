@@ -55,7 +55,7 @@ def build_comfy_workflow(payload: dict) -> dict:
             import os
             try:
                 # Resolve Global_Vault/vae path
-                vae_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Global_Vault", "vae")
+                vae_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Global_Vault", "vaes")
                 if os.path.exists(vae_dir):
                     vaes = [f for f in os.listdir(vae_dir) if f.endswith(('.safetensors', '.pt', '.ckpt'))]
                     if vaes:
@@ -64,7 +64,7 @@ def build_comfy_workflow(payload: dict) -> dict:
                         vae_name = "ae.safetensors"
                 else:
                     vae_name = "ae.safetensors"
-            except:
+            except Exception:
                 vae_name = "ae.safetensors"
 
         workflow["11"] = {"inputs": {"unet_name": unet_name, "weight_dtype": "default"}, "class_type": "UNETLoader"}

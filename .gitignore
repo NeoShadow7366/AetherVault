@@ -26,6 +26,7 @@ env/
 dist/
 build/
 *.spec
+!AetherVault.spec
 *.exe
 run_page.html
 bin/

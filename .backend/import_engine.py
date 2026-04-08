@@ -188,9 +188,18 @@ def _run_import(import_id: str, src_path: str, category: str, root_dir: str, api
             _update("thumbnail", "Downloading preview image...", progress=80)
             images = civitai_data.get("images", [])
             if images:
-                img_url = images[0].get("url")
-                if img_url:
-                    thumbnail_path = client.download_thumbnail(img_url, file_hash)
+                # Prefer static images over videos (videos can be 40MB+)
+                image_url = None
+                for img_entry in images:
+                    if img_entry.get("type", "image") != "video":
+                        image_url = img_entry.get("url")
+                        if image_url:
+                            break
+                # Fallback: use first entry if no static images
+                if not image_url:
+                    image_url = images[0].get("url")
+                if image_url:
+                    thumbnail_path = client.download_thumbnail(image_url, file_hash)
                     if thumbnail_path:
                         try:
                             thumbnail_path = os.path.relpath(thumbnail_path, root_dir)

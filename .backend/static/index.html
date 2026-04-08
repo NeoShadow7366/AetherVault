@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Manager Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/x-icon" href="/icons/favicon.ico">
     <style>
         :root {
             --bg-color: #0f172a;
@@ -223,6 +224,10 @@
         }
 
         .badge.type { background-color: rgba(59, 130, 246, 0.8); }
+        .badge.nsfw { background-color: rgba(239, 68, 68, 0.8); }
+        .badge.early-access { background-color: rgba(251, 191, 36, 0.85); color: #1a1a2e; }
+        .badge.base-model { background-color: rgba(99, 102, 241, 0.7); font-size: 0.65rem; }
+        .lb-ea-warning { background: rgba(251, 191, 36, 0.15); border: 1px solid rgba(251, 191, 36, 0.4); color: #fbbf24; padding: 10px 14px; border-radius: 8px; font-size: 0.82rem; margin-bottom: 10px; display: none; }
 
         /* Card Bottom Banner */
         .card-banner {
@@ -972,7 +977,7 @@
                     <input type="checkbox" id="ex-nsfw" style="pointer-events:none;"> Show NSFW
                 </label>
                 <label style="display:flex; align-items:center; gap:5px; font-size:0.9rem;">
-                    <input type="checkbox" id="ex-early" onchange="loadExplorer()"> Early Access
+                    <input type="checkbox" id="ex-early" checked onchange="loadExplorer()"> Include Early Access
                 </label>
                 <label style="display:flex; align-items:center; gap:5px; font-size:0.9rem;">
                     <input type="checkbox" id="ex-installed" onchange="loadExplorer()"> Hide Installed
@@ -1188,6 +1193,7 @@
                 </div>
 
                 <div style="margin-top: auto;">
+                    <div id="lb-ea-warning" class="lb-ea-warning">⏳ This version is in <strong>Early Access</strong> on CivitAI and may require Buzz to download.</div>
                     <div id="lb-actions-standard">
                         <button class="btn-download" id="lb-download-btn" onclick="executeDownload()">
                             Download Metadata Resolving...
@@ -1394,7 +1400,7 @@
                     </select>
                 </div>
                 <!-- Model Type -->
-                <div>
+                <div id="inf-model-type-row">
                     <label class="section-title">Model Type</label>
                     <select id="inf-model-type" class="select-fancy" onchange="onModelTypeChange(this.value)">
                         <option value="auto">Auto-Detect</option>
@@ -1436,14 +1442,14 @@
                         <option value="none">None</option>
                     </select>
                 </div>
-                <div>
+                <div id="inf-vae-row">
                     <label class="section-title">VAE Model</label>
                     <select id="inf-vae" class="select-fancy">
                         <option value="none">Baked VAE</option>
                     </select>
                 </div>
 
-                <div style="border-top: 1px solid var(--border); padding-top: 15px;">
+                <div id="inf-lora-section" style="border-top: 1px solid var(--border); padding-top: 15px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                         <label class="section-title" style="margin: 0;">LoRA Network</label>
                         <button onclick="addLoraSlot()" style="background: var(--primary); border: none; color: #fff; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight: bold;">+ Add LoRA</button>
@@ -1453,7 +1459,7 @@
                     </div>
                 </div>
 
-                <div>
+                <div id="inf-sampler-row">
                     <label class="section-title">Sampler Engine</label>
                     <select id="inf-sampler" class="select-fancy">
                         <optgroup label="Euler">
@@ -1496,7 +1502,7 @@
                         </optgroup>
                     </select>
                 </div>
-                <div>
+                <div id="inf-scheduler-row">
                     <label class="section-title">Scheduler</label>
                     <select id="inf-scheduler" class="select-fancy">
                         <option value="normal">Normal</option>
@@ -1510,7 +1516,7 @@
                         <option value="kl_optimal">KL Optimal</option>
                     </select>
                 </div>
-                <div style="display: flex; gap: 15px;">
+                <div id="inf-steps-row" style="display: flex; gap: 15px;">
                     <div style="flex: 1;">
                         <label class="section-title">Steps</label>
                         <input type="number" id="inf-steps" class="select-fancy" value="20" min="1" max="150">
@@ -1524,7 +1530,7 @@
                     <label class="section-title">CFG Scale</label>
                     <input type="number" id="inf-cfg" class="select-fancy" value="7.0" step="0.5" min="1" max="30">
                 </div>
-                <div style="display: flex; gap: 15px;">
+                <div id="inf-dimensions-row" style="display: flex; gap: 15px;">
                     <div style="flex: 1; min-width: 0;">
                         <label class="section-title">Width</label>
                         <input type="number" id="inf-width" class="select-fancy" value="1024" step="64" style="width:100%;">
@@ -1534,7 +1540,7 @@
                         <input type="number" id="inf-height" class="select-fancy" value="1024" step="64" style="width:100%;">
                     </div>
                 </div>
-                <div>
+                <div id="inf-seed-row">
                     <label class="section-title">Seed</label>
                     <div style="display: flex; gap: 10px;">
                         <input type="number" id="inf-seed" class="select-fancy" value="-1" style="flex: 1;">
@@ -1542,7 +1548,7 @@
                     </div>
                 </div>
 
-                <div style="border-top: 1px solid var(--border); padding-top: 15px;">
+                <div id="inf-hires-section" style="border-top: 1px solid var(--border); padding-top: 15px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="const c=document.getElementById('inf-hires-container');c.style.display=c.style.display==='none'?'flex':'none';">
                         <label class="section-title" style="margin: 0; cursor: pointer;">High-Res Fix</label>
                         <input type="checkbox" id="inf-hires-enable" style="transform: scale(1.2); cursor: pointer;" onchange="event.stopPropagation();">
@@ -1749,8 +1755,78 @@
             }
         }
 
-        function onEngineChange(type) {
-            console.log("Switched inference engine to: " + type);
+        function onEngineChange(engine) {
+            console.log("Switched inference engine to: " + engine);
+            
+            // Reset launch button state for new engine
+            const btn = document.getElementById('inf-launch-btn');
+            btn.innerText = 'Launch Engine';
+            btn.style.color = '#cbd5e1';
+            btn.onclick = launchActiveEngine;
+            window.engineLaunching = false;
+            window.comfyLaunching = false;
+            
+            // Apply engine-specific UI visibility
+            applyEngineVisibility(engine);
+            
+            // Probe engine connectivity
+            const probes = {
+                comfyui:  { proxy: '/api/comfy_proxy',   body: {endpoint: '/system_stats'} },
+                a1111:    { proxy: '/api/a1111_proxy',    body: {endpoint: '/sdapi/v1/options'} },
+                forge:    { proxy: '/api/forge_proxy',    body: {endpoint: '/sdapi/v1/options'} },
+                fooocus:  { proxy: '/api/fooocus_proxy',  body: {endpoint: '/'} }
+            };
+            const probe = probes[engine];
+            if(probe) {
+                btn.innerText = 'Checking...';
+                btn.style.color = '#fbbf24';
+                fetch(probe.proxy, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(probe.body)
+                }).then(res => {
+                    if(res.ok) {
+                        btn.innerText = 'Backend Connected 🟢';
+                        btn.style.color = '#4ade80';
+                    } else throw new Error('offline');
+                }).catch(() => {
+                    btn.innerText = 'Launch Engine';
+                    btn.style.color = '#cbd5e1';
+                });
+            }
+        }
+
+        /* ═══ Engine-Specific UI Visibility ═══ */
+        function applyEngineVisibility(engine) {
+            // All toggleable row IDs in the Config panel
+            const allRows = [
+                'inf-model-type-row', 'inf-sd-model-row', 'inf-sd-refiner-row',
+                'inf-vae-row', 'inf-lora-section', 'inf-sampler-row',
+                'inf-scheduler-row', 'inf-steps-row', 'inf-sd-cfg-row',
+                'inf-dimensions-row', 'inf-seed-row', 'inf-hires-section',
+                'inf-sd-cn-row'
+            ];
+
+            // Per-engine: which rows to HIDE (everything else stays visible)
+            const hideMap = {
+                comfyui: [],
+                a1111:  ['inf-scheduler-row', 'inf-vae-row', 'inf-sd-refiner-row'],
+                forge:  ['inf-scheduler-row', 'inf-vae-row', 'inf-sd-refiner-row'],
+                fooocus: [
+                    'inf-model-type-row', 'inf-sd-model-row', 'inf-sd-refiner-row',
+                    'inf-vae-row', 'inf-lora-section', 'inf-sampler-row',
+                    'inf-scheduler-row', 'inf-steps-row', 'inf-sd-cfg-row',
+                    'inf-dimensions-row', 'inf-seed-row', 'inf-hires-section',
+                    'inf-sd-cn-row'
+                ]
+            };
+
+            const toHide = new Set(hideMap[engine] || []);
+
+            allRows.forEach(id => {
+                const el = document.getElementById(id);
+                if(el) el.style.display = toHide.has(id) ? 'none' : '';
+            });
         }
 
         // executeFluxInference logic moved to server backend
@@ -2686,6 +2762,25 @@
         window.onlyNsfw = false;
         let vaultOffset = 0;
         const vaultLimit = 40;
+
+        // Helper: detect if a version is in early access
+        function isVersionEarlyAccess(v) {
+            // CivitAI current API: availability field
+            if(v.availability && v.availability === 'EarlyAccess') return true;
+            // Legacy fallback fields
+            if(v.earlyAccessEndsAt) {
+                return new Date(v.earlyAccessEndsAt) > new Date();
+            }
+            if(v.earlyAccessTimeFrame && v.earlyAccessTimeFrame > 0) return true;
+            return false;
+        }
+
+        // Helper: format download count with K/M suffix
+        function formatDownloadCount(count) {
+            if(!count || count < 1000) return String(count || 0);
+            if(count >= 1000000) return (count / 1000000).toFixed(1) + 'M';
+            return (count / 1000).toFixed(1) + 'k';
+        }
         
         function handleNsfwClick(e) {
             e.preventDefault();
@@ -2753,7 +2848,7 @@
 
             const base = document.getElementById('ex-base').value;
             const nsfw = document.getElementById('ex-nsfw').checked ? 'true' : 'false';
-            const early = document.getElementById('ex-early').checked ? 'true' : 'false';
+            const includeEarly = document.getElementById('ex-early').checked;
 
             let url;
             let isExactId = false;
@@ -2778,7 +2873,7 @@
                     url.searchParams.append('sort', apiSort);
                 }
                 url.searchParams.append('nsfw', nsfw);
-                if(early === 'true') url.searchParams.append('earlyAccess', 'true');
+                if(includeEarly) url.searchParams.append('earlyAccess', 'true');
                 if(type) {
                     if(type === 'Text Encoder') {
                         url.searchParams.append('query', 'text encoder clip');
@@ -2832,6 +2927,13 @@
                 if (hideInstalled && installedHashes.has(model.name)) return;
                 if (window.onlyNsfw && !model.nsfw) return;
                 
+                // Early access filter: when unchecked, skip models where ALL versions are early access
+                const _includeEA = document.getElementById('ex-early').checked;
+                if(!_includeEA && model.modelVersions && model.modelVersions.length > 0) {
+                    const allEA = model.modelVersions.every(v => isVersionEarlyAccess(v));
+                    if(allEA) return;
+                }
+
                 activeModels[model.id] = model;
                 window.cardState[model.id] = 0;
                 
@@ -2852,8 +2954,22 @@
                 if(!bgHtml) bgHtml = `<img class="card-img" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100px' height='100px'><rect fill='%231e293b' width='100%' height='100%'/></svg>">`;
                 
                 const creatorName = (model.creator && model.creator.username) ? model.creator.username : 'Unknown';
-                const dl = (model.stats.downloadCount / 1000).toFixed(1) + 'k';
+                const dlCount = (model.stats && model.stats.downloadCount) ? model.stats.downloadCount : 0;
+                const dl = formatDownloadCount(dlCount);
                 const isFav = !!favs[model.id];
+
+                // Badge logic: NSFW, Early Access, Base Model
+                let extraBadges = '';
+                if(model.nsfw) {
+                    extraBadges += '<span class="badge nsfw">🔞 NSFW</span>';
+                }
+                const firstVersion = model.modelVersions && model.modelVersions[0];
+                if(firstVersion && isVersionEarlyAccess(firstVersion)) {
+                    extraBadges += '<span class="badge early-access">⏳ Early Access</span>';
+                }
+                if(firstVersion && firstVersion.baseModel && firstVersion.baseModel !== 'Unknown') {
+                    extraBadges += `<span class="badge base-model">${firstVersion.baseModel}</span>`;
+                }
                 
                 let carouselBtns = '';
                 if(imgCount > 1) {
@@ -2866,7 +2982,8 @@
                 grid.innerHTML += `
                     <div class="card" onclick="openLightbox(${model.id})">
                         <div class="card-tags">
-                            <span class="badge type">${model.type}</span>
+                            <span class="badge type">${model.type || 'Model'}</span>
+                            ${extraBadges}
                             <button class="fav-btn" onclick="event.stopPropagation(); toggleFavorite(${model.id})" style="margin-left:auto; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); border:1px solid rgba(255,255,255,0.1); border-radius:4px; cursor:pointer; font-size:1.1rem; line-height:1; padding:2px 6px; color: ${isFav ? '#fbbf24' : 'rgba(255,255,255,0.4)'}; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">★</button>
                         </div>
                         <div class="card-img-container">
@@ -2877,7 +2994,7 @@
                             <h3>${model.name}</h3>
                             <div class="card-meta-row">
                                 <span>${creatorName}</span>
-                                <span>Downloads: ${dl}</span>
+                                <span>⬇ ${dl}</span>
                             </div>
                         </div>
                     </div>
@@ -2946,12 +3063,18 @@
             // Populate versions
             const select = document.getElementById('lb-version-select');
             select.innerHTML = '';
+            let firstNonEA = -1;
             m.modelVersions.forEach((v, index) => {
                 const opt = document.createElement('option');
                 opt.value = index;
-                opt.innerText = `${v.name} (${v.baseModel})`;
+                const ea = isVersionEarlyAccess(v);
+                opt.innerText = ea ? `⏳ ${v.name} (${v.baseModel}) — EARLY ACCESS` : `${v.name} (${v.baseModel})`;
+                if(ea) opt.style.color = '#fbbf24';
                 select.appendChild(opt);
+                if(!ea && firstNonEA === -1) firstNonEA = index;
             });
+            // Auto-select first non-early-access version if available
+            if(firstNonEA > 0) select.value = firstNonEA;
             
             // Load Tags
             renderLightboxTags(m.tags || []);
@@ -3107,6 +3230,12 @@
                 trigCont.style.display = 'none';
             }
             
+            // Early Access warning banner
+            const eaWarning = document.getElementById('lb-ea-warning');
+            if(eaWarning) {
+                eaWarning.style.display = isVersionEarlyAccess(v) ? 'block' : 'none';
+            }
+
             // Download UI Binding
             let mainFile = (v.files && v.files.length > 0) ? (v.files.find(f => f.primary) || v.files[0]) : null;
             const btnStandard = document.getElementById('lb-actions-standard');
@@ -3136,6 +3265,15 @@
         function closeLightbox() {
             document.getElementById('lightbox').style.display = 'none';
         }
+
+        // Keyboard navigation for lightbox
+        document.addEventListener('keydown', (e) => {
+            const lb = document.getElementById('lightbox');
+            if(!lb || lb.style.display !== 'flex') return;
+            if(e.key === 'Escape') { closeLightbox(); e.preventDefault(); }
+            else if(e.key === 'ArrowLeft') { cycleLightboxImage(-1); e.preventDefault(); }
+            else if(e.key === 'ArrowRight') { cycleLightboxImage(1); e.preventDefault(); }
+        });
 
         async function executeDownload() {
             const m = currentModalModel;
@@ -3212,9 +3350,17 @@
         async function executeVaultRepair() {
             if(!confirm(`Refresh metadata and preview image for ${window.currentVaultFilename}?`)) return;
             try {
+                // Send both filename (always available) and file_hash (when metadata exists)
+                const payload = { filename: window.currentVaultFilename };
+                if(currentModalModel && currentModalModel.modelVersions && currentModalModel.modelVersions[0]) {
+                    const ver = currentModalModel.modelVersions[0];
+                    if(ver.files && ver.files[0] && ver.files[0].hashes && ver.files[0].hashes.SHA256) {
+                        payload.file_hash = ver.files[0].hashes.SHA256;
+                    }
+                }
                 const res = await fetch('/api/vault/repair', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({filename: window.currentVaultFilename})
+                    body: JSON.stringify(payload)
                 });
                 const response = await res.json();
                 if(response.status === 'success') {
@@ -3339,6 +3485,25 @@
                 // Compile tags for dataset attribute
                 const tagsList = ((item.tags && item.tags.map(t=>t.name)) || []).join(',');
                 
+                // Detect if the first preview image is actually a video (from CivitAI metadata)
+                let isVideoPreview = false;
+                let videoSrc = '';
+                if(item.metadata && item.metadata.images && item.metadata.images[0]) {
+                    const firstImg = item.metadata.images[0];
+                    if(firstImg.type === "video" && firstImg.url) {
+                        isVideoPreview = true;
+                        videoSrc = firstImg.url;  // Use remote CivitAI video URL
+                    }
+                }
+                // Also detect by file extension on the local thumbnail
+                if(!isVideoPreview && imgSrc) {
+                    const ext = imgSrc.split('.').pop().split('?')[0].toLowerCase();
+                    if(['mp4','webm','ogv','mov'].includes(ext)) {
+                        isVideoPreview = true;
+                        videoSrc = imgSrc;
+                    }
+                }
+
                 let clickStr = '';
                 if(!item.metadata) item.metadata = {};
                 if(!item.metadata.modelId) item.metadata.modelId = 'local_' + Math.floor(Math.random() * 1000000);
@@ -3364,11 +3529,17 @@
                 window.cardState[fakeParent.id] = 0;
                 clickStr = `onclick="openLightbox('${fakeParent.id}', '${item.filename}', '${item.vault_category}')" style="cursor:pointer;"`;
                 
+                // Render video or image preview based on media type
+                // Videos use the remote CivitAI URL; images use the local cached thumbnail
+                const mediaHtml = isVideoPreview
+                    ? `<video class="card-img" src="${videoSrc}" autoplay loop muted playsinline></video>`
+                    : `<img class="card-img" src="${imgSrc}" onerror="this.onerror=null;this.src='${_noPreviewSvg}'">`;
+
                 grid.innerHTML += `
                     <div class="card" data-category="${item.vault_category}" data-tags="${tagsList}" data-name="${displayName.toLowerCase()}" data-filename="${item.filename}" ${clickStr}>
                         <input type="checkbox" class="vault-select-checkbox" data-filename="${item.filename}" data-category="${item.vault_category}" onclick="event.stopPropagation(); updateVaultSelection();">
                         <div class="card-img-container" style="padding-top:100%;">
-                            <img class="card-img" src="${imgSrc}" onerror="this.onerror=null;this.src='${_noPreviewSvg}'">
+                            ${mediaHtml}
                             <div style="position:absolute; top:10px; right:10px; display:flex; gap:5px; z-index:2; flex-wrap:wrap;">
                                 ${item.update_available === 1 ? '<span class="badge" style="background:#10b981; color:#fff; border:none; font-weight:bold; padding:4px 8px; font-size:0.75rem;">🔄 UPDATE</span>' : ''}
                                 ${isFlux ? '<span class="badge" style="background:#fbbf24; color:#000; border:none; font-weight:bold; padding:4px 8px; font-size:0.75rem;">FLUX</span>' : ''}
@@ -3464,18 +3635,28 @@
                 window.activePackages = window.activePackages || [];
 
                 data.recipes.forEach(r => {
-                    const isInstalled = window.activePackages.some(p => p.id === r.id);
+                    const isInstalled = window.activePackages.some(p => p.id === r.app_id);
                     const btnHtml = isInstalled 
                         ? `<button disabled style="background: var(--surface); color: var(--text-muted); border: 1px solid var(--border); padding: 8px 15px; border-radius: 6px; cursor: not-allowed; font-weight: 600;">✅ Installed</button>`
-                        : `<button onclick="installRecipe('${r.id}')" style="background: #10b981; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">Install Sandbox</button>`;
+                        : `<button id="install-btn-${r.app_id}" onclick="installRecipe('${r.id}', '${r.app_id}')" style="background: #10b981; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">Install Sandbox</button>`;
 
                     grid.innerHTML += `
-                        <div class="std-card">
+                        <div class="std-card" id="recipe-card-${r.app_id}">
                             <h3 class="card-title" style="display:flex; align-items:center; gap:10px;">
                                 ${r.name}
                                 ${isInstalled ? `<span style="font-size:0.7rem; background: #10b981; color:white; padding:2px 6px; border-radius:8px; font-weight: bold;">INSTALLED</span>` : ''}
                             </h3>
                             <p class="subtitle" style="font-size: 0.85rem; margin-bottom: 15px;">Automated strict environment setup mapping to Global Vault.</p>
+                            <div id="install-progress-${r.app_id}" style="display:none; margin-bottom:12px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                    <span id="install-phase-${r.app_id}" style="font-size:0.8rem; color: #a78bfa; font-weight:600;">Starting...</span>
+                                    <span id="install-pct-${r.app_id}" style="font-size:0.75rem; color: var(--text-muted);">0%</span>
+                                </div>
+                                <div style="width:100%; height:6px; background: var(--border); border-radius:3px; overflow:hidden;">
+                                    <div id="install-bar-${r.app_id}" style="height:100%; width:0%; background: linear-gradient(90deg, #10b981, #34d399); border-radius:3px; transition: width 0.4s ease;"></div>
+                                </div>
+                                <div id="install-log-${r.app_id}" style="font-size:0.72rem; color: var(--text-muted); margin-top:4px; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                            </div>
                             <div style="display:flex; gap:10px;">
                                 ${btnHtml}
                                 <button onclick="openLogTerminal('${r.id}', '${r.name}')" style="background: var(--surface-hover); color: white; border: 1px solid var(--border); padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">⌨️ View Log</button>
@@ -3488,10 +3669,13 @@
             }
         }
 
-        async function installRecipe(recipeId) {
-            const btn = event.currentTarget;
-            btn.innerText = "Starting...";
-            btn.disabled = true;
+        let _installPollIntervals = {};
+
+        async function installRecipe(recipeId, appId) {
+            const btn = document.getElementById(`install-btn-${appId}`);
+            if(btn) { btn.innerText = "Starting..."; btn.disabled = true; }
+            const progressEl = document.getElementById(`install-progress-${appId}`);
+            if(progressEl) progressEl.style.display = 'block';
             try {
                 const res = await fetch('/api/install', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -3499,17 +3683,56 @@
                 });
                 const response = await res.json();
                 if(response.status === 'success') {
-                    btn.innerText = "Installing (Check Console)";
+                    if(btn) btn.innerText = "Installing...";
+                    startInstallPoll(appId);
                 } else {
-                    btn.innerText = "Error"; alert(response.message);
+                    if(btn) { btn.innerText = "Error"; btn.disabled = false; }
+                    if(progressEl) progressEl.style.display = 'none';
+                    alert(response.message);
                 }
             } catch(e) {
                 alert("Failed to contact server");
-                btn.innerText = "Install Sandbox";
-                btn.disabled = false;
+                if(btn) { btn.innerText = "Install Sandbox"; btn.disabled = false; }
+                if(progressEl) progressEl.style.display = 'none';
             }
         }
 
+        function startInstallPoll(appId) {
+            if(_installPollIntervals[appId]) clearInterval(_installPollIntervals[appId]);
+            _installPollIntervals[appId] = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/install/status');
+                    const data = await res.json();
+                    const job = data.jobs?.[appId];
+                    if(!job) return;
+                    const phaseEl = document.getElementById(`install-phase-${appId}`);
+                    const pctEl = document.getElementById(`install-pct-${appId}`);
+                    const barEl = document.getElementById(`install-bar-${appId}`);
+                    const logEl = document.getElementById(`install-log-${appId}`);
+                    const btn = document.getElementById(`install-btn-${appId}`);
+                    if(phaseEl) phaseEl.innerText = job.phase || 'Working...';
+                    if(pctEl) pctEl.innerText = `${job.percent || 0}%`;
+                    if(barEl) barEl.style.width = `${job.percent || 0}%`;
+                    if(logEl && job.log?.length) logEl.innerText = job.log[job.log.length - 1];
+                    if(job.status === 'completed') {
+                        clearInterval(_installPollIntervals[appId]);
+                        delete _installPollIntervals[appId];
+                        if(barEl) barEl.style.background = 'linear-gradient(90deg, #10b981, #22c55e)';
+                        if(phaseEl) { phaseEl.innerText = 'Installation Complete'; phaseEl.style.color = '#4ade80'; }
+                        if(btn) { btn.innerText = 'Installed'; btn.style.background = 'var(--surface)'; btn.style.color = 'var(--text-muted)'; }
+                        setTimeout(() => { loadRecipes(); if(typeof loadPackages === 'function') loadPackages(); }, 2000);
+                    } else if(job.status === 'failed') {
+                        clearInterval(_installPollIntervals[appId]);
+                        delete _installPollIntervals[appId];
+                        if(barEl) barEl.style.background = '#ef4444';
+                        if(phaseEl) { phaseEl.innerText = 'Installation Failed'; phaseEl.style.color = '#ef4444'; }
+                        if(btn) { btn.innerText = 'Retry Install'; btn.disabled = false; btn.style.background = '#ef4444'; }
+                    }
+                } catch(e) {
+                    console.error("Install poll error:", e);
+                }
+            }, 2000);
+        }
         async function launchPackage(packageId) {
             const btn = event.currentTarget;
             const originalText = btn.innerText;
@@ -3981,9 +4204,21 @@
         }
 
         async function initInferenceUI() {
-            // Check ComfyUI server status
+            // Check selected engine server status
+            const engine = document.getElementById('inf-engine')?.value || 'comfyui';
+            
+            // Apply engine-specific UI visibility on load
+            applyEngineVisibility(engine);
+            
+            const probes = {
+                comfyui: { proxy: '/api/comfy_proxy', body: {endpoint: '/system_stats'} },
+                a1111:   { proxy: '/api/a1111_proxy',  body: {endpoint: '/sdapi/v1/options'} },
+                forge:   { proxy: '/api/forge_proxy',  body: {endpoint: '/sdapi/v1/options'} },
+                fooocus: { proxy: '/api/fooocus_proxy', body: {endpoint: '/'} }
+            };
+            const probe = probes[engine] || probes['comfyui'];
             try {
-                const res = await fetch('/api/comfy_proxy', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({endpoint: '/system_stats'}) });
+                const res = await fetch(probe.proxy, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(probe.body) });
                 if(!res.ok) throw new Error("Offline");
                 document.getElementById('inf-launch-btn').innerText = "Backend Connected 🟢";
                 document.getElementById('inf-launch-btn').style.color = "#4ade80";
@@ -4026,7 +4261,7 @@
                     ref.appendChild(optRef);
                 });
                 
-                data.models.filter(m => m.vault_category === 'vae').forEach(m => {
+                data.models.filter(m => m.vault_category === 'vaes').forEach(m => {
                     const opt = document.createElement('option');
                     opt.value = m.filename;
                     opt.innerText = (m.metadata?.model?.name ? (m.metadata.model.name + " (" + m.filename + ")") : m.filename);
@@ -4232,7 +4467,7 @@
             window.engineLaunching = true;
             try {
                 const engine = document.getElementById('inf-engine')?.value || 'comfyui';
-                const appId = engine === 'a1111' ? 'forge' : engine; // launch forge for a1111
+                const appId = engine === 'a1111' ? 'auto1111' : engine;
                 
                 const btn = document.getElementById('inf-launch-btn');
                 btn.innerText = "Starting...";
@@ -4244,20 +4479,17 @@
                 });
                 
                 let retries = 0;
+                const proxyMap = {
+                    comfyui: { proxy: '/api/comfy_proxy', body: {endpoint: '/system_stats'} },
+                    a1111:   { proxy: '/api/a1111_proxy',  body: {endpoint: '/sdapi/v1/options'} },
+                    forge:   { proxy: '/api/forge_proxy',  body: {endpoint: '/sdapi/v1/options'} },
+                    fooocus: { proxy: '/api/fooocus_proxy', body: {endpoint: '/'} }
+                };
+                const probe = proxyMap[engine] || proxyMap['comfyui'];
+                
                 const poll = setInterval(async () => {
                     try {
-                        if(engine !== 'comfyui') {
-                            retries++;
-                            if(retries > 5) {
-                                clearInterval(poll);
-                                btn.innerText = "Engine Active";
-                                btn.style.color = "#4ade80";
-                                window.engineLaunching = false;
-                            }
-                            return;
-                        }
-                        
-                        const res = await fetch('/api/comfy_proxy', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({endpoint: '/system_stats'}) });
+                        const res = await fetch(probe.proxy, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(probe.body) });
                         if(res.ok) {
                             clearInterval(poll);
                             btn.innerText = "Engine Active";

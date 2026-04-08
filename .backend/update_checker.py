@@ -9,13 +9,14 @@ import urllib.error
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 # Ensure we can import our modules
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
 
 from metadata_db import MetadataDB
 
-db_path = os.path.join(ROOT_DIR, 'metadata.sqlite')
+db_path = os.path.join(BACKEND_DIR, 'metadata.sqlite')
 db = MetadataDB(db_path)
 
 def check_for_updates():
@@ -23,7 +24,7 @@ def check_for_updates():
     models = db.get_models_for_update_check()
     
     # Optional: fetch user's CivitAI API key if available
-    api_key_path = os.path.join(ROOT_DIR, 'settings.json')
+    api_key_path = os.path.join(BACKEND_DIR, 'settings.json')
     api_key = ""
     if os.path.exists(api_key_path):
         try:

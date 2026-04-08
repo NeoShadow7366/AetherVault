@@ -200,7 +200,11 @@ def download_portable_python(base_path):
             root.update()
             
             with tarfile.open(tar_path, "r:gz") as tar:
-                tar.extractall(path=bin_dir)
+                # Python 3.12+ requires filter param to avoid DeprecationWarning
+                try:
+                    tar.extractall(path=bin_dir, filter='data')
+                except TypeError:
+                    tar.extractall(path=bin_dir)  # fallback for Python < 3.12
             os.remove(tar_path)
             
             progress.stop()
