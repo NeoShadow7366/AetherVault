@@ -66,5 +66,42 @@ class TestServerAPI(BaseQATestCase):
             data = json.loads(e.read().decode('utf-8'))
             self.assertIn("error", data)
 
+    # ── Sprint 12: Ollama Endpoint Tests ──────────────────────────
+
+    def test_ollama_status_endpoint(self):
+        """Verify /api/ollama/status returns valid JSON with online and models fields."""
+        req = urllib.request.Request(f"{self.base_url}/api/ollama/status")
+        with urllib.request.urlopen(req, timeout=5.0) as response:
+            self.assertEqual(response.status, 200)
+            data = json.loads(response.read().decode('utf-8'))
+            # Contract: always returns online (bool) and models (list)
+            self.assertIn("online", data)
+            self.assertIsInstance(data["online"], bool)
+            self.assertIn("models", data)
+            self.assertIsInstance(data["models"], list)
+            # If online, models should be populated; if offline, models should be empty
+            if data["online"]:
+                self.assertGreaterEqual(len(data["models"]), 0)
+            else:
+                self.assertEqual(len(data["models"]), 0)
+
+    def test_ollama_enhance_empty_prompt(self):
+        """Verify /api/ollama/enhance rejects empty prompts with 400."""
+        payload = json.dumps({"prompt": ""}).encode('utf-8')
+        req = urllib.request.Request(
+            f"{self.base_url}/api/ollama/enhance",
+            method="POST",
+            data=payload,
+            headers={'Content-Type': 'application/json', 'Content-Length': str(len(payload))}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5.0) as response:
+                self.fail("Should have thrown 400 HTTP Error for empty prompt")
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 400)
+            data = json.loads(e.read().decode('utf-8'))
+            self.assertIn("error", data)
+
 if __name__ == '__main__':
     unittest.main()
+

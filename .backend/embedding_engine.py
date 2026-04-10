@@ -1,15 +1,27 @@
 import os
 import json
+import math
 import logging
-from sentence_transformers import SentenceTransformer
 import time
+import threading
+from sentence_transformers import SentenceTransformer
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 class EmbeddingEngine:
+    """Semantic search and embedding generation engine.
+    
+    Optimization: Pre-parsed embedding vectors are cached in memory to avoid
+    re-deserializing JSON on every search query. The cache auto-invalidates
+    when new embeddings are generated.
+    """
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._model = None
+        self._db = None
+        # In-memory embedding cache: list of (file_hash, vector_list) tuples
+        self._embedding_cache = None
+        self._cache_lock = threading.Lock()
         
     @property
     def model(self):
@@ -21,10 +33,39 @@ class EmbeddingEngine:
     def embed_text(self, text: str):
         return self.model.encode(text).tolist()
 
+    def _invalidate_cache(self):
+        """Mark the embedding cache as stale so next search re-loads."""
+        with self._cache_lock:
+            self._embedding_cache = None
+
+    def _ensure_cache(self):
+        """Load and parse all embeddings from DB into memory if not cached."""
+        if self._embedding_cache is not None:
+            return
+        with self._cache_lock:
+            if self._embedding_cache is not None:
+                return  # Double-check under lock
+            db = self._get_db()
+            raw = db.get_all_embeddings()
+            parsed = []
+            for emb in raw:
+                try:
+                    vec = json.loads(emb['vector_json'])
+                    parsed.append((emb['file_hash'], vec))
+                except Exception:
+                    continue
+            self._embedding_cache = parsed
+            logging.info(f"Embedding cache loaded: {len(parsed)} vectors in memory.")
+
+    def _get_db(self):
+        """Lazily create and cache a MetadataDB instance."""
+        if self._db is None:
+            from metadata_db import MetadataDB
+            self._db = MetadataDB(self.db_path)
+        return self._db
+
     def generate_missing_embeddings(self):
-        import sqlite3
-        from metadata_db import MetadataDB
-        db = MetadataDB(self.db_path)
+        db = self._get_db()
         unembedded = db.get_models_unembedded()
         
         if not unembedded:
@@ -54,38 +95,41 @@ class EmbeddingEngine:
                 processed += 1
             except Exception as e:
                 logging.error(f"Error embedding {model['filename']}: {e}")
+        
+        # Invalidate the search cache so new embeddings are picked up
+        if processed > 0:
+            self._invalidate_cache()
                 
         return processed
 
     def search(self, query: str, top_k: int = 20):
-        # Allow natural language via semantic match
-        query_vector = self.embed_text(query)
-        from metadata_db import MetadataDB
-        db = MetadataDB(self.db_path)
-        embeddings = db.get_all_embeddings()
+        """Semantic search using cached, pre-parsed embedding vectors.
         
-        if not embeddings:
+        Performance: With cache, this avoids re-parsing N JSON strings per query.
+        For 1000 models, this saves ~1000 json.loads() calls per keystroke.
+        """
+        query_vector = self.embed_text(query)
+        self._ensure_cache()
+        
+        if not self._embedding_cache:
+            return []
+
+        # Pre-compute query norm once
+        q_norm = math.sqrt(sum(a * a for a in query_vector))
+        if q_norm == 0:
             return []
             
-        import math
-        def cosine_similarity(v1, v2):
-            dot = sum(a*b for a, b in zip(v1, v2))
-            norm1 = math.sqrt(sum(a*a for a in v1))
-            norm2 = math.sqrt(sum(b*b for b in v2))
-            if norm1 == 0 or norm2 == 0: return 0
-            return dot / (norm1 * norm2)
-
         results = []
-        for emb in embeddings:
-            try:
-                vec = json.loads(emb['vector_json'])
-                score = cosine_similarity(query_vector, vec)
-                results.append((score, emb['file_hash']))
-            except Exception:
+        for file_hash, vec in self._embedding_cache:
+            # Inline cosine similarity for performance
+            dot = sum(a * b for a, b in zip(query_vector, vec))
+            v_norm = math.sqrt(sum(b * b for b in vec))
+            if v_norm == 0:
                 continue
+            score = dot / (q_norm * v_norm)
+            results.append((score, file_hash))
                 
         results.sort(reverse=True, key=lambda x: x[0])
-        # Return tuples of (score, file_hash)
         return results[:top_k]
 
 if __name__ == "__main__":
@@ -98,4 +142,4 @@ if __name__ == "__main__":
                 logging.info(f"Embedded {processed} models in background run.")
         except Exception as e:
             logging.error(f"Embedding Engine Error: {e}")
-        time.sleep(60) # Run every minute
+        time.sleep(60)  # Run every minute

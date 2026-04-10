@@ -1,6 +1,13 @@
 ---
 name: Ecosystem Health Dashboard
 description: Provides a consolidated, read-only overview of the health and status of the entire guardian ecosystem and the monolith's infrastructure by aggregating read-only reports from existing guardians.
+keywords:
+  - dashboard
+  - health
+  - status
+  - guardian
+  - ecosystem
+  - overview
 ---
 
 # 🛡️ Ecosystem Health Dashboard (Guardian Dashboard)

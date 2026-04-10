@@ -2,6 +2,8 @@
   "app_id": "forge",
   "name": "SD WebUI Forge",
   "repository": "https://github.com/lllyasviel/stable-diffusion-webui-forge.git",
+  "install_mode": "latest_release",
+  "description": "Optimized Stable Diffusion WebUI with native FLUX and performance enhancements.",
   "install_commands": [
     "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121",
     "pip install -r requirements_versions.txt"
@@ -15,5 +17,6 @@
     "clip": "models/text_encoder",
     "embeddings": "embeddings"
   },
+  "port": 7860,
   "launch_command": "launch.py --autolaunch --api"
 }

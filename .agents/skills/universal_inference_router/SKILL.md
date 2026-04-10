@@ -1,6 +1,17 @@
 ---
 name: Universal Inference Router
 description: Proxies generation requests to ComfyUI, SD WebUI Forge, Automatic1111, and Fooocus backends. Translates a unified payload into engine-native formats, routes img2img vs txt2img automatically, and streams results back to the dashboard.
+keywords:
+  - inference
+  - proxy
+  - ComfyUI
+  - A1111
+  - Forge
+  - Fooocus
+  - payload translation
+  - batch
+  - img2img
+  - txt2img
 ---
 
 # Universal Inference Router

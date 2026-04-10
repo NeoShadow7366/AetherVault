@@ -9,7 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.1.0] — 2026-04-10
+*Sprint 12 — Inference Studio 2.0: Inpainting, Regional Prompting, Iteration Tools, and Full QA Coverage.*
+
 ### Added
+- **Inpainting Canvas** — Full mask painting overlay on the Inference Studio canvas with brush/eraser tools, adjustable brush size, and undo/clear controls. Mask data injected into ComfyUI (`LoadImageMask` → `SetLatentNoiseMask`) and A1111 (`mask`, `inpainting_fill`, `mask_blur`, `inpaint_full_res`) payloads.
+- **Regional Prompting** — Multi-zone prompt editor with visual zone layout. ComfyUI backend builds `CLIPTextEncode` → `FluxGuidance` (FLUX only) → `ConditioningSetArea` → `ConditioningCombine` chains with pixel-accurate coordinate math. A1111 backend joins zones with `BREAK` delimiters.
+- **X/Y/Z Parameter Plot Grid** — Side panel for sweeping any generation parameter across axes, producing a visual comparison grid of outputs.
+- **Wildcard Prompt Parser** — Inline `__wildcard__` syntax expansion with randomized selection from user-defined word lists.
+- **Seed Variation Explorer** — Generate multiple outputs with incremental seed offsets from a base seed for rapid visual comparison.
+- **Real-time Generation Progress Bar** — Live progress tracking with percentage, step count, and ETA estimation during inference.
+- **Ollama Prompt Enhancement** — Integration with local Ollama LLM for prompt refinement and expansion (`/api/ollama/status`, `/api/ollama/enhance` endpoints).
+- **Package Repair Pipeline** — Multi-strategy repair mechanism in `installer_engine.py` with streaming progress, handling corrupted `.git` directories and Windows file-lock bypass.
+- **Server Route Table Refactor** — Centralized `ROUTE_TABLE` dict dispatch replacing scattered `if/elif` chains in `do_GET`/`do_POST`, improving maintainability across 70+ endpoints.
 - Comprehensive `docs/` structure matching the agentic architecture (9 feature docs, 45+ endpoint API reference).
 - Full `api-reference.md` mapping all dynamic JSON endpoints with request/response shapes.
 - `database-schema.md` defining the SQLite `metadata_db` schema, WAL mode, and migration strategy.
@@ -17,10 +31,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/features/model_downloads.md` and `docs/features/model_imports.md` covering download and import engines.
 - System Tray Launcher section in `deployment-and-setup.md` with mutex, bootstrap GUI, and shutdown sequence.
 
+### Changed
+- `agents.md` consolidated from ~640 lines of duplicated context to a streamlined 3-layer architecture document with explicit skill/rule tables.
+- All 16 agent skills updated with standardized YAML frontmatter metadata (input/output contracts, authority levels).
+- Agent rules extracted into dedicated `.agents/rules/` directory (security, cross-platform, data-safety, QA, model-switch, learning-and-memory).
+- Agent workflows formalized in `.agents/workflows/` (7 workflows: `/start`, `/SW`, `/gitrelease`, QA runners, model router, doc generation).
+- API contracts updated in `.agents/contracts/api_contracts.md` to reflect Sprint 12 endpoints.
+- Recipe JSON files (`comfyui.json`, `forge.json`, `auto1111.json`, `fooocus.json`) updated with latest configuration fields.
+- `installer_engine.py` refactored with streaming `Popen`-based git clone for real-time progress reporting.
+- `metadata_db.py` hardened with proper connection lifecycle management and test isolation.
+- Legacy test files relocated from `.backend/` root to `.tests/legacy/` for archival.
+
 ### Fixed
 - Rebuilt `docs/README.md` to properly map to the AetherVault project instead of outdated `.NET` legacy references.
 - Corrected 5 broken `file:///` URIs in `first-time-workflow.md`.
 - Fixed typos across documentation ("Vanilia", "downloding", "system systems", duplicate "securely").
+- Fixed `test_installer_engine` mock mismatch caused by Sprint 11's `Popen` migration — added `subprocess.Popen` mock alongside `subprocess.run`.
+- Removed 7 orphaned dev/debug scripts from project root (`check_db.py`, `check_vaes.py`, `download_test_models.py`, `launch_and_test.py`, `test_combo2.py`, `test_flux_payload.py`, `test_proxy.py`).
+
+### Tests
+- **78/78 tests passing** — full regression suite including 15 Playwright E2E tests.
+- Added 7 proxy translator tests covering FLUX/SDXL inpainting mask injection, regional prompting (multi-zone and single-zone), and A1111 payload generation.
+- Added 2 server API tests for Ollama status and prompt enhancement endpoints.
+- Coverage: `proxy_translators.py` 73%, `vault_crawler.py` 87%, `metadata_db.py` 53%, `installer_engine.py` 47%.
 
 ---
 

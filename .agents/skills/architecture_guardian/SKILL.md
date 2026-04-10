@@ -1,6 +1,14 @@
 ---
 name: Architecture Guardian
 description: Enforces zero-dependency "AetherVault" principles, analyzes architectural changes, and traces cross-boundary impacts.
+keywords:
+  - architecture
+  - zero-dependency
+  - impact analysis
+  - cross-boundary
+  - refactoring
+  - coupling
+  - ADR
 ---
 
 # 🛡️ Architecture Guardian (Monolith Sentinel / Nexus Reviewer)

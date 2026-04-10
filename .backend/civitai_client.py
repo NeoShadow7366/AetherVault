@@ -9,10 +9,10 @@ from metadata_db import MetadataDB
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 class CivitaiClient:
-    def __init__(self, root_dir: str):
+    def __init__(self, root_dir: str, db: 'MetadataDB' = None):
         self.root_dir = os.path.abspath(root_dir)
         self.db_path = os.path.join(self.root_dir, ".backend", "metadata.sqlite")
-        self.db = MetadataDB(self.db_path)
+        self.db = db or MetadataDB(self.db_path)
         
         self.thumbnails_dir = os.path.join(self.root_dir, ".backend", "cache", "thumbnails")
         os.makedirs(self.thumbnails_dir, exist_ok=True)
@@ -71,6 +71,21 @@ class CivitaiClient:
                 except OSError: pass
             return None
 
+    @staticmethod
+    def _select_thumbnail_url(metadata: dict) -> str:
+        """Extract the best preview image URL from CivitAI metadata.
+        Prefers static images over videos (videos can be 40MB+ and don't render as img tags)."""
+        if "images" not in metadata or not metadata["images"]:
+            return None
+        # First pass: find first static image
+        for img_entry in metadata["images"]:
+            if img_entry.get("type", "image") != "video":
+                url = img_entry.get("url")
+                if url:
+                    return url
+        # Fallback: use first entry (may be video thumbnail)
+        return metadata["images"][0].get("url")
+
     def process_unpopulated_models(self):
         logging.info("Checking database for unpopulated models...")
         models = self.db.get_unpopulated_models()
@@ -100,16 +115,7 @@ class CivitaiClient:
                 # 2. Extract and download preview image if available
                 #    Prefer static images over videos (videos can be 40MB+ and don't render as img tags)
                 if "images" in metadata and len(metadata["images"]) > 0:
-                    image_url = None
-                    # First pass: find first static image
-                    for img_entry in metadata["images"]:
-                        if img_entry.get("type", "image") != "video":
-                            image_url = img_entry.get("url")
-                            if image_url:
-                                break
-                    # Fallback: use first video thumbnail if no static images
-                    if not image_url:
-                        image_url = metadata["images"][0].get("url")
+                    image_url = self._select_thumbnail_url(metadata)
                     if image_url:
                         thumbnail_path = self.download_thumbnail(image_url, file_hash)
                         
@@ -140,15 +146,7 @@ class CivitaiClient:
         if metadata:
             thumbnail_path = None
             if "images" in metadata and len(metadata["images"]) > 0:
-                image_url = None
-                # Prefer static images over videos
-                for img_entry in metadata["images"]:
-                    if img_entry.get("type", "image") != "video":
-                        image_url = img_entry.get("url")
-                        if image_url:
-                            break
-                if not image_url:
-                    image_url = metadata["images"][0].get("url")
+                image_url = self._select_thumbnail_url(metadata)
                 if image_url:
                     # Delete old cached thumbnail so we get a fresh one
                     for ext in ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'gif']:

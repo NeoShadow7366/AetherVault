@@ -1,6 +1,5 @@
 import os
 import sys
-import sqlite3
 import json
 import logging
 import subprocess
@@ -9,14 +8,101 @@ import time
 import uuid
 import threading
 import datetime
+import shutil
+import urllib.request
+import urllib.parse
+import urllib.error
+import math
+import base64
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
+# ── Centralized sys.path setup (done once, not per-request) ──────
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+_ROOT_DIR = os.path.dirname(_BACKEND_DIR)
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
+
+# Import backend modules once at module level
+from metadata_db import MetadataDB
+from symlink_manager import create_safe_directory_link
+from proxy_translators import build_comfy_workflow, build_a1111_payload, build_fooocus_payload
+
 # ── Server State Globals ─────────────────────────────────────────
 global_http_server = None
 embedding_process = None
+
+# ── Thread Safety: Settings file lock ────────────────────────────
+_settings_lock = threading.Lock()
+
+# ── Cached MetadataDB singleton (avoid re-running DDL per request)
+_db_instance = None
+_db_lock = threading.Lock()
+
+def _get_db() -> MetadataDB:
+    """Returns a cached MetadataDB instance. Schema init runs once.
+    Re-creates if AIWebServer.root_dir has been changed (e.g., by tests)."""
+    global _db_instance
+    # Use AIWebServer.root_dir so tests can override the data root
+    server_cls = globals().get('AIWebServer')
+    current_root = getattr(server_cls, 'root_dir', _ROOT_DIR) if server_cls else _ROOT_DIR
+    db_path = os.path.join(current_root, ".backend", "metadata.sqlite")
+    if _db_instance is None or _db_instance.db_path != db_path:
+        with _db_lock:
+            if _db_instance is None or _db_instance.db_path != db_path:
+                _db_instance = MetadataDB(db_path)
+    return _db_instance
+
+# ── Cached Settings (avoid re-reading 627KB JSON per request) ────
+_settings_cache = {"data": None, "mtime": 0}
+
+def _get_settings() -> dict:
+    """Returns cached settings.json, re-reads only if file changed."""
+    settings_path = os.path.join(_ROOT_DIR, ".backend", "settings.json")
+    try:
+        current_mtime = os.path.getmtime(settings_path) if os.path.exists(settings_path) else 0
+    except OSError:
+        current_mtime = 0
+    if _settings_cache["data"] is not None and current_mtime == _settings_cache["mtime"]:
+        return dict(_settings_cache["data"])  # Return copy to prevent mutation
+    with _settings_lock:
+        try:
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            else:
+                data = {"theme": "dark", "civitai_api_key": "", "auto_updates": True}
+            _settings_cache["data"] = data
+            _settings_cache["mtime"] = current_mtime
+            return dict(data)
+        except (json.JSONDecodeError, OSError) as e:
+            logging.warning(f"Failed to read settings.json: {e}")
+            if _settings_cache["data"] is not None:
+                return dict(_settings_cache["data"])
+            return {"theme": "dark", "civitai_api_key": "", "auto_updates": True}
+
+def _save_settings(data: dict) -> None:
+    """Thread-safe settings save with merge semantics."""
+    settings_path = os.path.join(_ROOT_DIR, ".backend", "settings.json")
+    with _settings_lock:
+        existing = {}
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    existing = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+        existing.update(data)
+        with open(settings_path, 'w', encoding='utf-8') as f:
+            json.dump(existing, f, indent=4)
+        # Invalidate cache
+        _settings_cache["data"] = existing
+        try:
+            _settings_cache["mtime"] = os.path.getmtime(settings_path)
+        except OSError:
+            _settings_cache["mtime"] = 0
 
 # ── CivitAI MeiliSearch Public API Key ───────────────────────────
 # This is CivitAI's public search key embedded in their web frontend.
@@ -100,23 +186,70 @@ def graceful_teardown():
     time.sleep(0.5)
     os._exit(0)
 
-# ── Sprint 9: Vault Size Cache (60s TTL) ─────────────────────────
+# ── Sprint 9: Vault Size Cache (updated by background scanner) ───
 _vault_size_cache = {"size": 0, "expires": 0}
 
 # ── Sprint 9: In-Memory Batch Generation Queue ──────────────────
 _batch_queue = []  # list of {id, status, payload, result, error}
 _batch_lock = threading.Lock()
 _batch_worker_running = False
+_BATCH_MAX_HISTORY = 50  # Purge completed jobs beyond this limit
 
-# ── Phase 5: Civitai Search Cache (max 200 entries) ───────────
+# ── Phase 5: Civitai Search Cache (max 50 entries) ───────────
 _civitai_search_cache = {}  # dict of { cache_key: { "timestamp": float, "data": list } }
-_CIVITAI_CACHE_MAX = 200
+_CIVITAI_CACHE_MAX = 50
+
+# ── Dashboard Stats Cache (30s TTL) ──────────────────────────────
+_server_stats_cache = {"data": None, "expires": 0}
+_SERVER_STATS_TTL = 30
+
+# ── Engine Proxy Configuration ───────────────────────────────────
+_ENGINE_CONFIG = {
+    "comfyui": {"port": 8188, "translator": build_comfy_workflow, "gen_endpoint": "/prompt"},
+    "a1111":   {"port": 7861, "translator": build_a1111_payload, "gen_endpoint": "/sdapi/v1/txt2img"},
+    "forge":   {"port": 7860, "translator": build_a1111_payload, "gen_endpoint": "/sdapi/v1/txt2img"},
+    "fooocus": {"port": 8888, "translator": build_fooocus_payload, "gen_endpoint": "/v1/generation/text-to-image"},
+}
 
 class AIWebServer(BaseHTTPRequestHandler):
-    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    db_path = os.path.join(root_dir, ".backend", "metadata.sqlite")
-    static_dir = os.path.join(root_dir, ".backend", "static")
+    root_dir = _ROOT_DIR
+    db_path = os.path.join(_ROOT_DIR, ".backend", "metadata.sqlite")
+    static_dir = os.path.join(_ROOT_DIR, ".backend", "static")
     running_processes = {}  # PID tracking for launched packages
+    running_installs = {}   # PID tracking for active installer processes
+
+    # ── Shared Process Kill Helper ───────────────────────────────
+    @classmethod
+    def _kill_tracked_process(cls, package_id: str, remove_from_dict: bool = True) -> bool:
+        """Kill a tracked sandbox process. Returns True if a process was killed."""
+        entry = cls.running_processes.get(package_id)
+        if not entry:
+            return False
+        proc = entry.get("process") if isinstance(entry, dict) else entry
+        log_file = entry.get("log_file") if isinstance(entry, dict) else None
+        killed = False
+        if proc and proc.poll() is None:
+            try:
+                if os.name == 'nt':
+                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                                   check=False, capture_output=True)
+                else:
+                    proc.send_signal(signal.SIGTERM)
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                killed = True
+            except Exception as e:
+                logging.error(f"Error killing {package_id}: {e}")
+        if log_file:
+            try:
+                log_file.close()
+            except Exception:
+                pass
+        if remove_from_dict and package_id in cls.running_processes:
+            del cls.running_processes[package_id]
+        return killed
 
     def do_OPTIONS(self):
         """Handle CORS preflight requests."""
@@ -127,53 +260,87 @@ class AIWebServer(BaseHTTPRequestHandler):
         self.end_headers()
 
 
+    # ── Route Registry (O(1) dict lookup replaces O(n) if/elif chains) ──
+    _GET_ROUTES = {
+        "/api/models":              "send_api_models",
+        "/api/packages":            "send_api_packages",
+        "/api/recipes":             "send_api_recipes",
+        "/api/install/status":      "handle_install_status",
+        "/api/downloads":           "handle_get_downloads",
+        "/api/comfy_image":         "handle_comfy_image",
+        "/api/import/status":       "handle_import_status",
+        "/api/import/jobs":         "handle_import_jobs",
+        "/api/gallery":             "handle_gallery_list",
+        "/api/vault/search":        "handle_vault_search",
+        "/api/vault/tags":          "handle_get_all_tags",
+        "/api/hf/search":           "handle_hf_search",
+        "/api/extensions":          "handle_get_extensions",
+        "/api/extensions/status":   "handle_extension_status",
+        "/api/settings":            "handle_get_settings",
+        "/api/server_status":       "handle_server_status",
+        "/api/logs":                "handle_get_logs",
+        "/api/prompts":             "handle_list_prompts",
+        "/api/generate/queue":      "handle_batch_queue_status",
+        "/api/gallery/tags":        "handle_gallery_tags",
+        "/api/civitai_search":      "handle_civitai_search",
+        "/api/ollama/status":       "handle_ollama_status",
+        "/api/favorites":           "handle_get_favorites",
+    }
+
+    _POST_ROUTES = {
+        "/api/install":             "handle_install",
+        "/api/launch":              "handle_launch",
+        "/api/repair_dependency":   "handle_repair_dependency",
+        "/api/repair":              "handle_repair_install",
+        "/api/stop":                "handle_stop",
+        "/api/restart":             "handle_restart",
+        "/api/comfy_upload":        ("handle_comfy_upload", False),  # (method, needs_data)
+        "/api/uninstall":           "handle_uninstall",
+        "/api/download":            "handle_download",
+        "/api/download/retry":      "handle_retry_download",
+        "/api/downloads/clear":     ("handle_clear_downloads", False),
+        "/api/delete_model":        "handle_delete_model",
+        "/api/open_folder":         "handle_open_folder",
+        "/api/import":              "handle_import_file",
+        "/api/gallery/save":        "handle_gallery_save",
+        "/api/gallery/delete":      "handle_gallery_delete",
+        "/api/gallery/rate":        "handle_gallery_rate",
+        "/api/vault/tag/add":       "handle_add_tag",
+        "/api/vault/tag/remove":    "handle_remove_tag",
+        "/api/recipes/build":       "handle_build_recipe",
+        "/api/extensions/install":  "handle_install_extension",
+        "/api/extensions/remove":   "handle_remove_extension",
+        "/api/extensions/cancel":   "handle_cancel_extension",
+        "/api/vault/export":        "handle_vault_export",
+        "/api/vault/import":        "handle_vault_import",
+        "/api/vault/updates":       "handle_vault_updates",
+        "/api/vault/repair":        "handle_vault_repair",
+        "/api/vault/health_check":  "handle_vault_health_check",
+        "/api/vault/import_scan":   "handle_import_scan",
+        "/api/vault/bulk_delete":   "handle_vault_bulk_delete",
+        "/api/generate/batch":      "handle_batch_generate",
+        "/api/prompts/save":        "handle_save_prompt",
+        "/api/prompts/delete":      "handle_delete_prompt",
+        "/api/settings":            "handle_save_settings",
+        "/api/dashboard/clear_history": "handle_clear_dashboard_history",
+        "/api/import/external":     "handle_import_external",
+        "/api/system/update":       "handle_system_update",
+        "/api/comfy_proxy":         "handle_comfy_proxy",
+        "/api/a1111_proxy":         "handle_a1111_proxy",
+        "/api/forge_proxy":         "handle_forge_proxy",
+        "/api/fooocus_proxy":       "handle_fooocus_proxy",
+        "/api/ollama/enhance":      "handle_ollama_enhance",
+        "/api/favorites/add":       "handle_add_favorite",
+        "/api/favorites/remove":    "handle_remove_favorite",
+    }
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
         
-        # API Endpoints
-        if path == "/api/models":
-            self.send_api_models()
-        elif path == "/api/packages":
-            self.send_api_packages()
-        elif path == "/api/recipes":
-            self.send_api_recipes()
-        elif path == "/api/install/status":
-            self.handle_install_status()
-        elif path == "/api/downloads":
-            self.handle_get_downloads()
-        elif path == "/api/comfy_image":
-            self.handle_comfy_image()
-        elif path == "/api/import/status":
-            self.handle_import_status()
-        elif path == "/api/import/jobs":
-            self.handle_import_jobs()
-        elif path == "/api/gallery":
-            self.handle_gallery_list()
-        elif path == "/api/vault/search":
-            self.handle_vault_search()
-        elif path == "/api/vault/tags":
-            self.handle_get_all_tags()
-        elif path == "/api/hf/search":
-            self.handle_hf_search()
-        elif path == "/api/extensions":
-            self.handle_get_extensions()
-        elif path == "/api/extensions/status":
-            self.handle_extension_status()
-        elif path == "/api/settings":
-            self.handle_get_settings()
-        elif path == "/api/server_status":
-            self.handle_server_status()
-        elif path == "/api/logs":
-            self.handle_get_logs()
-        elif path == "/api/prompts":
-            self.handle_list_prompts()
-        elif path == "/api/generate/queue":
-            self.handle_batch_queue_status()
-        elif path == "/api/gallery/tags":
-            self.handle_gallery_tags()
-        elif path == "/api/civitai_search":
-            self.handle_civitai_search()
+        handler_name = self._GET_ROUTES.get(path)
+        if handler_name:
+            getattr(self, handler_name)()
         else:
             self.serve_static_files(path)
 
@@ -181,6 +348,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        # /api/shutdown is special: sends response before teardown
         if path == "/api/shutdown":
             print("[SERVER] === /api/shutdown ENDPOINT WAS HIT ===")
             sys.stdout.flush()
@@ -199,98 +367,28 @@ class AIWebServer(BaseHTTPRequestHandler):
             graceful_teardown()
             return
         
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length) if content_length > 0 else b"{}"
-        
-        try:
-            data = json.loads(body.decode('utf-8'))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logging.warning(f"Failed to parse POST body as JSON: {e}")
-            data = {}
-
-        if path == "/api/install":
-            self.handle_install(data)
-        elif path == "/api/launch":
-            self.handle_launch(data)
-        elif path == "/api/repair_dependency":
-            self.handle_repair_dependency(data)
-        elif path == "/api/stop":
-            self.handle_stop(data)
-        elif path == "/api/comfy_upload":
-            self.handle_comfy_upload()
-        elif path == "/api/uninstall":
-            self.handle_uninstall(data)
-        elif path == "/api/download":
-            self.handle_download(data)
-        elif path == "/api/download/retry":
-            self.handle_retry_download(data)
-        elif path == "/api/downloads/clear":
-            self.handle_clear_downloads()
-        elif path == "/api/delete_model":
-            self.handle_delete_model(data)
-        elif path == "/api/open_folder":
-            self.handle_open_folder(data)
-        elif path == "/api/import":
-            self.handle_import_file(data)
-        elif path == "/api/gallery/save":
-            self.handle_gallery_save(data)
-        elif path == "/api/gallery/delete":
-            self.handle_gallery_delete(data)
-        elif path == "/api/gallery/rate":
-            self.handle_gallery_rate(data)
-        elif path == "/api/vault/tag/add":
-            self.handle_add_tag(data)
-        elif path == "/api/vault/tag/remove":
-            self.handle_remove_tag(data)
-        elif path == "/api/recipes/build":
-            self.handle_build_recipe(data)
-        elif path == "/api/extensions/install":
-            self.handle_install_extension(data)
-        elif path == "/api/extensions/remove":
-            self.handle_remove_extension(data)
-        elif path == "/api/extensions/cancel":
-            self.handle_cancel_extension(data)
-        elif path == "/api/vault/export":
-            self.handle_vault_export(data)
-        elif path == "/api/vault/import":
-            self.handle_vault_import(data)
-        elif path == "/api/vault/updates":
-            self.handle_vault_updates(data)
-        elif path == "/api/vault/repair":
-            self.handle_vault_repair(data)
-        elif path == "/api/vault/health_check":
-            self.handle_vault_health_check(data)
-        elif path == "/api/vault/import_scan":
-            self.handle_import_scan(data)
-        elif path == "/api/vault/bulk_delete":
-            self.handle_vault_bulk_delete(data)
-        elif path == "/api/generate/batch":
-            self.handle_batch_generate(data)
-        elif path == "/api/prompts/save":
-            self.handle_save_prompt(data)
-        elif path == "/api/prompts/delete":
-            self.handle_delete_prompt(data)
-        elif path == "/api/settings":
-            self.handle_save_settings(data)
-        elif path == "/api/dashboard/clear_history":
-            self.handle_clear_dashboard_history(data)
-        elif path == "/api/import/external":
-            self.handle_import_external(data)
-        elif path == "/api/system/update":
-            self.handle_system_update(data)
-        elif path == "/api/comfy_proxy":
-            self.handle_comfy_proxy(data)
-        elif path == "/api/a1111_proxy":
-            self.handle_a1111_proxy(data)
-        elif path == "/api/forge_proxy":
-            self.handle_forge_proxy(data)
-        elif path == "/api/fooocus_proxy":
-            self.handle_fooocus_proxy(data)
-        else:
+        route = self._POST_ROUTES.get(path)
+        if not route:
             self.send_json_response({"error": f"Endpoint {path} not found"}, 404)
+            return
+        
+        # Routes can be either "method_name" (receives data) or ("method_name", False) (no data arg)
+        if isinstance(route, tuple):
+            handler_name, needs_data = route
+            getattr(self, handler_name)()
+        else:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            
+            try:
+                data = json.loads(body.decode('utf-8'))
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logging.warning(f"Failed to parse POST body as JSON: {e}")
+                data = {}
+            
+            getattr(self, route)(data)
 
     def serve_static_files(self, path):
-        import urllib.parse
         # Decode and normalize path separators for Windows
         path = urllib.parse.unquote(path).replace('\\', '/')
         
@@ -308,7 +406,6 @@ class AIWebServer(BaseHTTPRequestHandler):
             filepath = os.path.join(self.root_dir, "icons", "Logo.ico")
         # Serve custom user icons
         elif path.startswith("/icons/"):
-            import urllib.parse
             clean_path = urllib.parse.unquote(path.lstrip("/"))
             filepath = os.path.join(self.root_dir, clean_path)
         # Check if they are requesting a thumbnail
@@ -337,21 +434,24 @@ class AIWebServer(BaseHTTPRequestHandler):
         elif ext == "ico": content_type = "image/x-icon"
         
         try:
-            with open(filepath, "rb") as f:
-                content = f.read()
+            file_size = os.path.getsize(filepath)
             self.send_response(200)
             self.send_header("Content-type", content_type)
-            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Content-Length", str(file_size))
             self.end_headers()
-            self.wfile.write(content)
+            
+            if file_size > 1_048_576:  # 1MB threshold: stream in chunks
+                with open(filepath, "rb") as f:
+                    while chunk := f.read(65536):
+                        self.wfile.write(chunk)
+            else:
+                with open(filepath, "rb") as f:
+                    self.wfile.write(f.read())
         except Exception as e:
             self.send_error(500, f"Server Error: {str(e)}")
 
     def handle_civitai_search(self):
         try:
-            import time
-            from urllib.parse import urlparse, parse_qs
-            import urllib.request
             qs = parse_qs(urlparse(self.path).query)
             query = qs.get("query", [""])[0]
             type_filter = qs.get("type", [""])[0]
@@ -386,15 +486,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             
             url = "https://search-new.civitai.com/multi-search"
             # Load override key from settings if available
-            search_key = _CIVITAI_SEARCH_KEY
-            try:
-                settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
-                if os.path.exists(settings_path):
-                    with open(settings_path, 'r', encoding='utf-8') as f:
-                        _s = json.load(f)
-                        search_key = _s.get("civitai_search_key", search_key)
-            except Exception:
-                pass
+            search_key = _get_settings().get("civitai_search_key", _CIVITAI_SEARCH_KEY)
 
             headers = {
                 "Content-Type": "application/json",
@@ -475,65 +567,64 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def send_api_models(self):
         try:
-            from urllib.parse import urlparse, parse_qs
             parsed = urlparse(self.path)
             qs = parse_qs(parsed.query)
             
             limit = int(qs.get('limit', [1000])[0])
             offset = int(qs.get('offset', [0])[0])
 
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            # Count total
-            cursor.execute('SELECT COUNT(*) FROM models')
-            total = cursor.fetchone()[0]
-            
-            # Fetch slice
-            cursor.execute('SELECT * FROM models ORDER BY id DESC LIMIT ? OFFSET ?', (limit, offset))
-            rows = cursor.fetchall()
-            
-            # Optimization: Fetch all tags for this page in one bulk query
-            hash_to_tags = {}
-            if rows:
-                hashes = [r["file_hash"] for r in rows if r["file_hash"]]
-                if hashes:
-                    for i in range(0, len(hashes), 900):
-                        chunk = hashes[i:i+900]
-                        placeholders = ','.join('?' * len(chunk))
-                        cursor.execute(f'SELECT file_hash, tag FROM user_tags WHERE file_hash IN ({placeholders})', chunk)
-                        for h, tag in cursor.fetchall():
-                            hash_to_tags.setdefault(h, []).append(tag)
-            
-            conn.close()
-            
-            # Format rows
-            models = []
-            for row in rows:
-                d = dict(row)
-                if d.get("metadata_json"):
-                    try:
-                        d["metadata"] = json.loads(d["metadata_json"])
-                    except Exception:
-                        d["metadata"] = {}
-                else:
-                    d["metadata"] = {}
-                if "metadata_json" in d:
-                    del d["metadata_json"]
-                    
-                d["user_tags"] = hash_to_tags.get(d["file_hash"], [])
-                models.append(d)
+            db = _get_db()
+            result = db.get_models_paginated(limit=limit, offset=offset)
                 
             self.send_json_response({
                 "status": "success", 
-                "models": models,
-                "total": total,
+                "models": result["models"],
+                "total": result["total"],
                 "limit": limit,
                 "offset": offset
             })
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
+
+    # ── Disk size cache (non-blocking) ─────────────────────────────
+    _disk_size_cache = {}  # {package_id: size_mb}
+    _disk_size_thread = None
+
+    @classmethod
+    def _compute_dir_size_mb(cls, path: str) -> float:
+        """Calculate total size of a directory in MB. Returns 0 on error."""
+        total = 0
+        try:
+            for dirpath, _dirnames, filenames in os.walk(path):
+                for f in filenames:
+                    fp = os.path.join(dirpath, f)
+                    try:
+                        total += os.path.getsize(fp)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        return round(total / (1024 * 1024), 1)
+
+    @classmethod
+    def _refresh_disk_sizes(cls, packages_dir: str):
+        """Background worker: refresh disk sizes for all installed packages."""
+        def _worker():
+            try:
+                if not os.path.exists(packages_dir):
+                    return
+                for d in os.listdir(packages_dir):
+                    app_path = os.path.join(packages_dir, d)
+                    if os.path.isdir(app_path):
+                        cls._disk_size_cache[d] = cls._compute_dir_size_mb(app_path)
+            except Exception:
+                pass
+            finally:
+                cls._disk_size_thread = None
+
+        if cls._disk_size_thread is None or not cls._disk_size_thread.is_alive():
+            cls._disk_size_thread = threading.Thread(target=_worker, daemon=True)
+            cls._disk_size_thread.start()
 
     def send_api_packages(self):
         packages_dir = os.path.join(self.root_dir, "packages")
@@ -550,6 +641,9 @@ class AIWebServer(BaseHTTPRequestHandler):
                             with open(manifest_path, 'r', encoding='utf-8') as f:
                                 manifest = json.load(f)
                                 pkg_info["name"] = manifest.get("name", d.capitalize())
+                                pkg_info["installed_version"] = manifest.get("installed_version")
+                                pkg_info["installed_at"] = manifest.get("installed_at")
+                                pkg_info["port"] = manifest.get("port")
                         except (json.JSONDecodeError, OSError) as e:
                             logging.warning(f"Failed to read manifest for {d}: {e}")
                     
@@ -569,8 +663,14 @@ class AIWebServer(BaseHTTPRequestHandler):
                                     pass
                             del AIWebServer.running_processes[d]
 
+                    # Disk usage from cache (non-blocking)
+                    pkg_info["disk_size_mb"] = AIWebServer._disk_size_cache.get(d)
+
                     packages.append(pkg_info)
                     
+        # Trigger background refresh of disk sizes
+        AIWebServer._refresh_disk_sizes(packages_dir)
+
         self.send_json_response({"status": "success", "packages": packages})
 
     def send_api_recipes(self):
@@ -586,25 +686,15 @@ class AIWebServer(BaseHTTPRequestHandler):
                                 "id": file,
                                 "app_id": recipe.get("app_id"),
                                 "name": recipe.get("name", file),
-                                "repository": recipe.get("repository", "")
+                                "repository": recipe.get("repository", ""),
+                                "description": recipe.get("description", "")
                             })
                     except Exception as e:
                         logging.error(f"Error reading recipe {file}: {e}")
                         
         self.send_json_response({"status": "success", "recipes": recipes})
 
-    def handle_install_status(self):
-        """Returns current installation progress for all install jobs."""
-        jobs_file = os.path.join(self.root_dir, ".backend", "cache", "install_jobs.json")
-        try:
-            if os.path.exists(jobs_file):
-                with open(jobs_file, 'r', encoding='utf-8') as f:
-                    jobs = json.load(f)
-                self.send_json_response({"status": "success", "jobs": jobs})
-            else:
-                self.send_json_response({"status": "success", "jobs": {}})
-        except Exception as e:
-            self.send_json_response({"status": "error", "message": str(e), "jobs": {}}, 500)
+    # NOTE: Duplicate handle_install_status removed (was overridden by definition at line 705)
 
     def handle_build_recipe(self, data):
         app_id = data.get("app_id")
@@ -642,6 +732,19 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
+    def handle_install_status(self):
+        """Serve the install_jobs.json file so the frontend can poll progress."""
+        jobs_file = os.path.join(self.root_dir, ".backend", "cache", "install_jobs.json")
+        try:
+            if os.path.exists(jobs_file):
+                with open(jobs_file, 'r', encoding='utf-8') as f:
+                    jobs = json.load(f)
+            else:
+                jobs = {}
+            self.send_json_response({"status": "success", "jobs": jobs})
+        except (json.JSONDecodeError, OSError) as e:
+            self.send_json_response({"status": "success", "jobs": {}})
+
     def handle_install(self, data):
         recipe_id = data.get("recipe_id")
         if not recipe_id:
@@ -653,16 +756,34 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Recipe not found"}, 404)
             return
 
+        # Resolve app_id from recipe to check for duplicate installs
+        try:
+            with open(recipe_path, 'r', encoding='utf-8') as f:
+                recipe_data = json.load(f)
+            app_id = recipe_data.get("app_id", recipe_id)
+        except Exception:
+            app_id = recipe_id
+
+        # Guard: Reject duplicate installs for the same app
+        existing = AIWebServer.running_installs.get(app_id)
+        if existing and existing.poll() is None:
+            self.send_json_response({
+                "status": "error",
+                "message": f"{app_id} is already being installed. Please wait for it to finish."
+            }, 409)
+            return
+
         installer_script = os.path.join(self.root_dir, ".backend", "installer_engine.py")
         
         logging.info(f"Triggering background installation for {recipe_id}")
         
-        # Spawn isolated installation process
+        # Spawn isolated installation process with PID tracking
         kwargs = {}
         if os.name == 'nt':
             kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 512)
             
-        subprocess.Popen([sys.executable, installer_script, recipe_path], **kwargs)
+        proc = subprocess.Popen([sys.executable, installer_script, recipe_path], **kwargs)
+        AIWebServer.running_installs[app_id] = proc
         
         self.send_json_response({"status": "success", "message": "Installation started in background"})
 
@@ -672,6 +793,17 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
             return
 
+        # Guard: Prevent double-launch — return existing URL if already running
+        existing = AIWebServer.running_processes.get(package_id)
+        if existing:
+            proc = existing.get("process") if isinstance(existing, dict) else existing
+            if proc and proc.poll() is None:
+                # Already running — resolve port and return URL
+                port = existing.get("port", 7860) if isinstance(existing, dict) else 7860
+                url = f"http://127.0.0.1:{port}"
+                self.send_json_response({"status": "success", "message": "Package already running.", "url": url, "already_running": True})
+                return
+
         package_path = os.path.join(self.root_dir, "packages", package_id)
         manifest_path = os.path.join(package_path, "manifest.json")
         app_path = os.path.join(package_path, "app")
@@ -680,7 +812,6 @@ class AIWebServer(BaseHTTPRequestHandler):
         if not os.path.exists(manifest_path) and os.path.exists(app_path):
             recipe_path = os.path.join(self.root_dir, ".backend", "recipes", f"{package_id}.json")
             if os.path.exists(recipe_path):
-                import shutil
                 shutil.copy2(recipe_path, manifest_path)
                 logging.info(f"Pre-flight: Auto-recovered manifest.json for {package_id}")
 
@@ -700,14 +831,20 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "No launch_command found in manifest"}, 400)
             return
 
+        # PRE-FLIGHT 2: Verify the launch script actually exists
+        launch_script = launch_cmd.split(" ")[0]  # e.g. "main.py" from "main.py --arg"
+        launch_script_path = os.path.join(app_path, launch_script)
+        if not os.path.exists(launch_script_path):
+            logging.error(f"Launch script not found: {launch_script_path}")
+            self.send_json_response({
+                "status": "error",
+                "message": f"Source code is missing or corrupted ({launch_script} not found). Use Repair to re-download.",
+                "needs_repair": True
+            }, 404)
+            return
+
         # PRE-FLIGHT 2: Symlinks verification
         try:
-            import sys
-            if self.root_dir not in sys.path:
-                sys.path.append(self.root_dir)
-            if os.path.join(self.root_dir, ".backend") not in sys.path:
-                sys.path.append(os.path.join(self.root_dir, ".backend"))
-            from symlink_manager import create_safe_directory_link
             symlinks = manifest.get("model_symlinks", {})
             vault_dir = os.path.join(self.root_dir, "Global_Vault")
             for vault_src, app_target in symlinks.items():
@@ -736,9 +873,18 @@ class AIWebServer(BaseHTTPRequestHandler):
 
         logging.info(f"Launching {package_id}...")
         
-        # Pipe output to a runtime log file for web-terminal tailing
+        # Pipe output to a runtime log file for web-terminal tailing (append mode preserves history)
         log_path = os.path.join(package_path, "runtime.log")
-        log_file = open(log_path, 'w', encoding='utf-8')
+        try:
+            log_file = open(log_path, 'a', encoding='utf-8')
+            log_file.write(f"\n{'='*60}\n")
+            log_file.write(f"  Session started: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            log_file.write(f"{'='*60}\n\n")
+            log_file.flush()
+        except OSError as e:
+            logging.error(f"Failed to open log file for {package_id}: {e}")
+            self.send_json_response({"status": "error", "message": f"Cannot open log file: {e}"}, 500)
+            return
             
         # Combine command, e.g. python_exe main.py
         full_command = [python_exe] + launch_cmd.split(" ")
@@ -748,17 +894,15 @@ class AIWebServer(BaseHTTPRequestHandler):
             kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 512)
             
         p = subprocess.Popen(full_command, cwd=app_path, stdout=log_file, stderr=subprocess.STDOUT, **kwargs)
-        AIWebServer.running_processes[package_id] = {"process": p, "log_file": log_file}
         
-        ports = {
-            "comfyui": "8188",
-            "forge": "7860",
-            "auto1111": "7861",
-            "fooocus": "8888"
-        }
-        url = f"http://127.0.0.1:{ports.get(package_id, '7860')}"
+        # Read port from manifest, fall back to legacy hardcoded map
+        _fallback_ports = {"comfyui": 8188, "forge": 7860, "auto1111": 7861, "fooocus": 8888}
+        port = manifest.get("port", _fallback_ports.get(package_id, 7860))
         
-        self.send_json_response({"status": "success", "message": "Package starting...", "url": url})
+        AIWebServer.running_processes[package_id] = {"process": p, "log_file": log_file, "port": port}
+        url = f"http://127.0.0.1:{port}"
+        
+        self.send_json_response({"status": "success", "message": "Package starting...", "url": url, "port": port})
 
     def handle_repair_dependency(self, data):
         package_id = data.get("package_id")
@@ -795,6 +939,58 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": f"Repair failed: {str(e)}"}, 500)
 
+    def handle_repair_install(self, data):
+        """Repair a corrupted package by re-running the install pipeline.
+        
+        The installer_engine now detects corrupted app directories (missing source
+        but .git present) and handles them with a temp-clone-and-copy fallback.
+        """
+        package_id = data.get("package_id")
+        if not package_id:
+            self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
+            return
+
+        recipe_path = os.path.join(self.root_dir, ".backend", "recipes", f"{package_id}.json")
+
+        if not os.path.exists(recipe_path):
+            self.send_json_response({"status": "error", "message": f"No recipe found for {package_id}"}, 404)
+            return
+
+        # Auto-stop running process first
+        AIWebServer._kill_tracked_process(package_id)
+
+        # Clear stale install job status so frontend doesn't see old "completed"
+        jobs_file = os.path.join(self.root_dir, ".backend", "cache", "install_jobs.json")
+        try:
+            if os.path.exists(jobs_file):
+                with open(jobs_file, 'r', encoding='utf-8') as f:
+                    jobs = json.load(f)
+                if package_id in jobs:
+                    del jobs[package_id]
+                with open(jobs_file, 'w', encoding='utf-8') as f:
+                    json.dump(jobs, f, indent=2)
+        except Exception as e:
+            logging.warning(f"Could not clear stale install job for {package_id}: {e}")
+
+        # Re-run the full install pipeline (handles locked dirs with temp-clone fallback)
+        installer_script = os.path.join(self.root_dir, ".backend", "installer_engine.py")
+        logging.info(f"Repair: Re-installing {package_id} from recipe...")
+
+        kwargs = {}
+        if os.name == 'nt':
+            kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 512)
+
+        # Track to prevent duplicate installs
+        existing = AIWebServer.running_installs.get(package_id)
+        if existing and existing.poll() is None:
+            self.send_json_response({"status": "error", "message": f"{package_id} repair is already in progress."}, 409)
+            return
+
+        proc = subprocess.Popen([sys.executable, installer_script, recipe_path], **kwargs)
+        AIWebServer.running_installs[package_id] = proc
+
+        self.send_json_response({"status": "success", "message": f"Repair started for {package_id}. The app will be re-downloaded."})
+
     def handle_stop(self, data=None):
         package_id = data.get("package_id") if data else None
             
@@ -802,44 +998,28 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
             return
 
-        entry = AIWebServer.running_processes.get(package_id)
-        if not entry:
+        if package_id not in AIWebServer.running_processes:
             self.send_json_response({"status": "error", "message": "Package not running or not tracked"}, 404)
             return
 
-        # Support both old dict format and legacy bare process objects
-        if isinstance(entry, dict):
-            p = entry.get("process")
-            log_file = entry.get("log_file")
-        else:
-            p = entry
-            log_file = None
+        logging.info(f"Terminating package {package_id}...")
+        AIWebServer._kill_tracked_process(package_id)
+        self.send_json_response({"status": "success", "message": "Package stopped successfully"})
 
-        logging.info(f"Terminating package {package_id} (PID: {p.pid})...")
-        try:
-            if os.name == 'nt':
-                # Force kill the process tree on Windows
-                subprocess.run(['taskkill', '/F', '/T', '/PID', str(p.pid)], check=False)
-            else:
-                p.send_signal(signal.SIGTERM)
-                try:
-                    p.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    p.kill() # SIGKILL
-        except Exception as e:
-            logging.error(f"Error stopping package {package_id}: {e}")
-            self.send_json_response({"status": "error", "message": str(e)}, 500)
+    def handle_restart(self, data):
+        """Atomic restart: stop → wait for port release → re-launch in a single request."""
+        package_id = data.get("package_id")
+        if not package_id:
+            self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
             return
 
-        # Close the log file handle to prevent leaks
-        if log_file:
-            try:
-                log_file.close()
-            except Exception:
-                pass
-            
-        del AIWebServer.running_processes[package_id]
-        self.send_json_response({"status": "success", "message": "Package stopped successfully"})
+        AIWebServer._kill_tracked_process(package_id)
+
+        # Brief delay to let the OS release the port
+        time.sleep(1.0)
+
+        # Re-launch via the existing handler
+        self.handle_launch(data)
 
     def handle_uninstall(self, data):
         package_id = data.get("package_id")
@@ -847,15 +1027,12 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
             return
 
-        installer_script = os.path.join(self.root_dir, ".backend", "installer_engine.py")
+        # Safety: Auto-stop the package if it's currently running
+        AIWebServer._kill_tracked_process(package_id)
+
+        logging.info(f"Triggering uninstallation for {package_id}")
         
-        logging.info(f"Triggering background uninstallation for {package_id}")
-        
-        # We can run uninstall inline optionally, but for UX safety we stick to subprocess
-        # Python script expects recipe.json natively.
-        # Let's import installer_engine directly for faster deletion without background overhead.
         try:
-            sys.path.append(os.path.join(self.root_dir, ".backend"))
             from installer_engine import RecipeInstaller
             installer = RecipeInstaller(self.root_dir)
             success = installer.uninstall(package_id)
@@ -868,7 +1045,6 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_get_extensions(self):
         try:
-            from urllib.parse import urlparse, parse_qs
             qs = parse_qs(urlparse(self.path).query)
             package_id = qs.get("package_id", [""])[0]
             
@@ -901,12 +1077,9 @@ class AIWebServer(BaseHTTPRequestHandler):
         target_dir = os.path.join(self.root_dir, "packages", package_id, "custom_nodes")
         os.makedirs(target_dir, exist_ok=True)
         
-        import uuid
-        import threading
         job_id = str(uuid.uuid4())[:8]
         
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
             from installer_engine import ExtensionCloneTracker
             tracker = ExtensionCloneTracker(self.root_dir)
             
@@ -923,14 +1096,13 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_extension_status(self):
         """GET /api/extensions/status?job_id=X — poll real-time clone progress."""
-        from urllib.parse import urlparse, parse_qs
+
         qs = parse_qs(urlparse(self.path).query)
         job_id = qs.get("job_id", [""])[0]
         if not job_id:
             self.send_json_response({"status": "error", "message": "Missing job_id"}, 400)
             return
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
             from installer_engine import ExtensionCloneTracker
             tracker = ExtensionCloneTracker(self.root_dir)
             job = tracker.get_job_status(job_id)
@@ -948,7 +1120,6 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Missing job_id"}, 400)
             return
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
             from installer_engine import ExtensionCloneTracker
             tracker = ExtensionCloneTracker(self.root_dir)
             success = tracker.cancel_job(job_id)
@@ -972,7 +1143,6 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Extension not found"}, 404)
             return
             
-        import shutil
         try:
             shutil.rmtree(target_path)
             self.send_json_response({"status": "success", "message": "Extension removed."})
@@ -1029,11 +1199,10 @@ class AIWebServer(BaseHTTPRequestHandler):
         filename = data.get("filename")
         
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
             from civitai_client import CivitaiClient
-            from metadata_db import MetadataDB
+
             
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+            db = _get_db()
             
             # Resolve file_hash from filename if not directly provided
             if not file_hash and filename:
@@ -1048,15 +1217,9 @@ class AIWebServer(BaseHTTPRequestHandler):
             client = CivitaiClient(self.root_dir)
             
             # Apply user's CivitAI API key if configured
-            settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
-            if os.path.exists(settings_path):
-                try:
-                    with open(settings_path, 'r', encoding='utf-8') as f:
-                        api_key = json.load(f).get("civitai_api_key", "")
-                    if api_key:
-                        client.headers["Authorization"] = f"Bearer {api_key}"
-                except Exception:
-                    pass
+            api_key = _get_settings().get("civitai_api_key", "")
+            if api_key:
+                client.headers["Authorization"] = f"Bearer {api_key}"
             
             success = client.repair_model_metadata(file_hash)
             if success:
@@ -1067,31 +1230,16 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
     def handle_get_settings(self):
-        settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
-        if os.path.exists(settings_path):
-            try:
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                self.send_json_response(data)
-                return
-            except (json.JSONDecodeError, OSError) as e:
-                logging.warning(f"Failed to read settings.json, returning defaults: {e}")
-        self.send_json_response({"theme": "dark", "civitai_api_key": "", "auto_updates": True})
+        try:
+            data = _get_settings()
+            self.send_json_response(data)
+        except Exception as e:
+            logging.warning(f"Failed to read settings, returning defaults: {e}")
+            self.send_json_response({"theme": "dark", "civitai_api_key": "", "auto_updates": True})
 
     def handle_save_settings(self, data):
-        settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
         try:
-            # Merge with existing settings to avoid data loss from partial saves
-            existing = {}
-            if os.path.exists(settings_path):
-                try:
-                    with open(settings_path, 'r', encoding='utf-8') as f:
-                        existing = json.load(f)
-                except (json.JSONDecodeError, OSError):
-                    existing = {}
-            existing.update(data)
-            with open(settings_path, 'w', encoding='utf-8') as f:
-                json.dump(existing, f, indent=4)
+            _save_settings(data)
             self.send_json_response({"status": "success"})
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
@@ -1115,7 +1263,7 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_get_logs(self):
         try:
-            from urllib.parse import urlparse, parse_qs
+    
             qs = parse_qs(urlparse(self.path).query)
             package_id = qs.get("package_id", [""])[0]
             if not package_id:
@@ -1127,10 +1275,17 @@ class AIWebServer(BaseHTTPRequestHandler):
                 self.send_json_response({"status": "success", "logs": "--- No active execution environment. Logs empty. ---"})
                 return
             
-            # Read last 150 lines safely
-            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
-            tail = "".join(lines[-150:])
+            # Tail-seek optimization: read only the last 32KB instead of the entire file
+            _TAIL_BYTES = 32 * 1024
+            try:
+                file_size = os.path.getsize(log_path)
+                with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    if file_size > _TAIL_BYTES:
+                        f.seek(file_size - _TAIL_BYTES)
+                        f.readline()  # Skip partial first line after seek
+                    tail = f.read()
+            except OSError:
+                tail = "--- Error reading log file ---"
             
             self.send_json_response({"status": "success", "logs": tail})
         except Exception as e:
@@ -1147,7 +1302,6 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Missing download parameters"}, 400)
             return
             
-        import uuid
         job_id = str(uuid.uuid4())
         
         downloader_script = os.path.join(self.root_dir, ".backend", "download_engine.py")
@@ -1254,8 +1408,8 @@ class AIWebServer(BaseHTTPRequestHandler):
             try:
                 os.remove(filepath)
                 # Cleanup DB natively using metadata_db
-                from metadata_db import MetadataDB
-                db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+    
+                db = _get_db()
                 db.remove_model_by_filename(filename)
                 self.send_json_response({"status": "success", "message": "Model deleted"})
             except Exception as e:
@@ -1271,7 +1425,6 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "File not found"}, 400)
             return
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
             from import_engine import start_import
             import_id = start_import(src_path, category, self.root_dir, api_key)
             self.send_json_response({"status": "queued", "import_id": import_id})
@@ -1279,14 +1432,13 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
     def handle_import_status(self):
-        from urllib.parse import urlparse, parse_qs
+
         qs = parse_qs(urlparse(self.path).query)
         import_id = qs.get("id", [None])[0]
         if not import_id:
             self.send_json_response({"status": "error", "message": "Missing id"}, 400)
             return
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
             from import_engine import get_import_status
             result = get_import_status(import_id)
             if not result:
@@ -1298,38 +1450,40 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_import_jobs(self):
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
             from import_engine import list_import_jobs
             self.send_json_response(list_import_jobs())
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
     def handle_gallery_list(self):
-        from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(self.path).query)
         sort = qs.get("sort", ["newest"])[0]
         tag = qs.get("tag", [""])[0]
         try:
-            from metadata_db import MetadataDB
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+            db = _get_db()
             if tag:
                 rows = db.list_generations_by_tag(tag)
             else:
                 rows = db.list_generations(sort=sort)
                 
-            # Self-heal: Drop missing files seamlessly
-            # Note: image_path can be a base64 data URI, /api/ URL, or HTTP link.
+            # Self-heal: Collect stale IDs and batch-delete them
             valid_rows = []
+            stale_ids = []
             for r in rows:
                 img_path = r.get("image_path", "")
                 if not img_path:
-                    db.delete_generation(r.get("id"))
+                    stale_ids.append(r.get("id"))
                 elif img_path.startswith("data:") or img_path.startswith("http://") or img_path.startswith("https://") or img_path.startswith("/api/"):
                     valid_rows.append(r)
                 elif os.path.exists(img_path):
                     valid_rows.append(r)
                 else:
-                    db.delete_generation(r.get("id"))
+                    stale_ids.append(r.get("id"))
+            
+            # Single batch DELETE instead of N individual queries
+            if stale_ids:
+                db.batch_delete_generations(stale_ids)
+                logging.info(f"Gallery self-heal: removed {len(stale_ids)} stale entries.")
             
             self.send_json_response({"status": "success", "generations": valid_rows})
         except Exception as e:
@@ -1338,8 +1492,8 @@ class AIWebServer(BaseHTTPRequestHandler):
     def handle_gallery_tags(self):
         """GET /api/gallery/tags — returns unique tags from all generations."""
         try:
-            from metadata_db import MetadataDB
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+
+            db = _get_db()
             tags = db.get_gallery_tags()
             self.send_json_response({"status": "success", "tags": tags})
         except Exception as e:
@@ -1347,8 +1501,8 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_gallery_save(self, data):
         try:
-            from metadata_db import MetadataDB
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+
+            db = _get_db()
             row_id = db.save_generation(
                 image_path=data.get("image_path"),
                 prompt=data.get("prompt", ""),
@@ -1372,8 +1526,8 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Missing id"}, 400)
             return
         try:
-            from metadata_db import MetadataDB
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+
+            db = _get_db()
             db.delete_generation(gen_id)
             self.send_json_response({"status": "success"})
         except Exception as e:
@@ -1386,8 +1540,8 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Missing id"}, 400)
             return
         try:
-            from metadata_db import MetadataDB
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+
+            db = _get_db()
             db.rate_generation(gen_id, rating)
             self.send_json_response({"status": "success"})
         except Exception as e:
@@ -1420,7 +1574,20 @@ class AIWebServer(BaseHTTPRequestHandler):
             
         payload = data.get("payload")
         if endpoint == "/api/generate" and payload:
-            from proxy_translators import build_comfy_workflow
+            # Sprint 12: Upload inpainting mask to ComfyUI if present
+            mask_b64 = payload.get("mask_b64")
+            if mask_b64:
+                mask_name = self._upload_b64_to_comfy(mask_b64, "inpaint_mask.png")
+                if mask_name:
+                    payload["mask_image_name"] = mask_name
+                # Also upload the init_image for inpainting if sent as b64
+                init_b64 = payload.get("init_image_b64")
+                if init_b64 and not payload.get("init_image_name"):
+                    init_name = self._upload_b64_to_comfy(init_b64, "inpaint_source.png")
+                    if init_name:
+                        payload["init_image_name"] = init_name
+                        payload["denoising_strength"] = payload.get("denoising_strength", 0.75)
+                        
             try:
                 payload = build_comfy_workflow(payload)
                 endpoint = "/prompt"
@@ -1428,7 +1595,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                 self.send_json_response({"error": str(e)}, 400)
                 return
 
-        import urllib.request
+
         url = f"http://127.0.0.1:8188{endpoint}"
         
         try:
@@ -1472,9 +1639,6 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_comfy_image(self):
         # proxy raw image bytes from comfyUI
-        import urllib.request
-        from urllib.parse import urlparse
-        
         parsed = urlparse(self.path)
         qs = parsed.query
         url = f"http://127.0.0.1:8188/view?{qs}"
@@ -1494,7 +1658,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_error(500, str(e))
 
     def handle_comfy_upload(self):
-        import urllib.request
+
         try:
             length = int(self.headers['Content-Length'])
             boundary = self.headers['Content-Type'].split('boundary=')[1].encode()
@@ -1507,23 +1671,52 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"error": str(e)}, 500)
 
-    def handle_a1111_proxy(self, data):
+    def _upload_b64_to_comfy(self, b64_data, filename="upload.png"):
+        """Sprint 12: Upload base64-encoded PNG to ComfyUI's /upload/image endpoint.
+        Returns the filename ComfyUI assigned, or None on failure."""
+        try:
+            img_bytes = base64.b64decode(b64_data)
+            boundary = b"----AetherVaultMaskBoundary"
+            body = b"--" + boundary + b"\r\n"
+            body += f'Content-Disposition: form-data; name="image"; filename="{filename}"\r\n'.encode()
+            body += b"Content-Type: image/png\r\n\r\n"
+            body += img_bytes
+            body += b"\r\n--" + boundary + b"--\r\n"
+            
+            url = "http://127.0.0.1:8188/upload/image"
+            headers = {"Content-Type": f"multipart/form-data; boundary={boundary.decode()}"}
+            req = urllib.request.Request(url, data=body, headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as res:
+                result = json.loads(res.read().decode('utf-8'))
+                return result.get("name", filename)
+        except Exception as e:
+            logging.warning(f"Failed to upload {filename} to ComfyUI: {e}")
+            return None
+
+    def _proxy_to_engine(self, engine_name: str, data: dict):
+        """Consolidated proxy dispatcher for A1111, Forge, and Fooocus backends.
+        Uses _ENGINE_CONFIG for port/translator lookup."""
+        config = _ENGINE_CONFIG.get(engine_name)
+        if not config:
+            self.send_json_response({"error": f"Unknown engine: {engine_name}"}, 400)
+            return
+
         payload = data.get("payload")
-        endpoint = data.get("endpoint", "/sdapi/v1/txt2img")
+        endpoint = data.get("endpoint", config["gen_endpoint"])
         
         if endpoint == "/api/generate" and payload:
-            import sys, os
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from proxy_translators import build_a1111_payload
             try:
-                payload = build_a1111_payload(payload)
-                endpoint = "/sdapi/v1/img2img" if "init_images" in payload else "/sdapi/v1/txt2img"
+                payload = config["translator"](payload)
+                # A1111/Forge: select img2img vs txt2img endpoint based on payload
+                if engine_name in ("a1111", "forge") and "init_images" in payload:
+                    endpoint = "/sdapi/v1/img2img"
+                else:
+                    endpoint = config["gen_endpoint"]
             except Exception as e:
                 self.send_json_response({"error": str(e)}, 400)
                 return
                 
-        import urllib.request
-        url = f"http://127.0.0.1:7861{endpoint}"
+        url = f"http://127.0.0.1:{config['port']}{endpoint}"
         try:
             if payload:
                 req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
@@ -1534,81 +1727,28 @@ class AIWebServer(BaseHTTPRequestHandler):
                 self.send_json_response(json.loads(content))
         except Exception as e:
             self.send_json_response({"error": str(e)}, 500)
+
+    def handle_a1111_proxy(self, data):
+        self._proxy_to_engine("a1111", data)
 
     def handle_forge_proxy(self, data):
-        payload = data.get("payload")
-        endpoint = data.get("endpoint", "/sdapi/v1/txt2img")
-        
-        if endpoint == "/api/generate" and payload:
-            import sys, os
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from proxy_translators import build_a1111_payload
-            try:
-                payload = build_a1111_payload(payload)
-                endpoint = "/sdapi/v1/img2img" if "init_images" in payload else "/sdapi/v1/txt2img"
-            except Exception as e:
-                self.send_json_response({"error": str(e)}, 400)
-                return
-                
-        import urllib.request
-        url = f"http://127.0.0.1:7860{endpoint}"
-        try:
-            if payload:
-                req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-            else:
-                req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=30) as res:
-                content = res.read().decode('utf-8')
-                self.send_json_response(json.loads(content))
-        except Exception as e:
-            self.send_json_response({"error": str(e)}, 500)
+        self._proxy_to_engine("forge", data)
 
     def handle_fooocus_proxy(self, data):
-        payload = data.get("payload")
-        endpoint = data.get("endpoint", "/v1/generation/text-to-image")
-        
-        if endpoint == "/api/generate" and payload:
-            import sys, os
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from proxy_translators import build_fooocus_payload
-            try:
-                payload = build_fooocus_payload(payload)
-                endpoint = "/v1/generation/text-to-image"
-            except Exception as e:
-                self.send_json_response({"error": str(e)}, 400)
-                return
-                
-        import urllib.request
-        url = f"http://127.0.0.1:8888{endpoint}"
-        try:
-            if payload:
-                req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-            else:
-                req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=30) as res:
-                content = res.read().decode('utf-8')
-                self.send_json_response(json.loads(content))
-        except Exception as e:
-            self.send_json_response({"error": str(e)}, 500)
+        self._proxy_to_engine("fooocus", data)
 
     def handle_clear_dashboard_history(self, data):
+        global _server_stats_cache
         try:
             # Clear downloads.json
             downloads_file = os.path.join(self.root_dir, ".backend", "cache", "downloads.json")
             if os.path.exists(downloads_file):
                 with open(downloads_file, 'w') as f:
                     json.dump({}, f)
-            # Add cleared_at timestamp to settings to hide old generations visually
-            import time
-            settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
-            settings = {}
-            if os.path.exists(settings_path):
-                with open(settings_path, 'r') as f:
-                    try: settings = json.load(f)
-                    except (json.JSONDecodeError, ValueError): pass
-            settings["activity_cleared_at"] = time.time()
-            with open(settings_path, 'w') as f:
-                json.dump(settings, f, indent=4)
+            # Add cleared_at timestamp via thread-safe settings helper
+            _save_settings({"activity_cleared_at": time.time()})
+            # Invalidate stats cache so next poll sees the change instantly
+            _server_stats_cache["data"] = None
             self.send_json_response({"status": "success"})
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
@@ -1619,15 +1759,11 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Invalid directory provided"}, 400)
             return
             
-        import math
         try:
             folder_name = os.path.basename(os.path.abspath(target_path)).replace(" ", "_")
             if not folder_name: folder_name = "External_Import"
             vault_dir = os.path.join(self.root_dir, "Global_Vault", f"External_{folder_name}")
             os.makedirs(vault_dir, exist_ok=True)
-            
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from symlink_manager import create_safe_directory_link
             
             # Use symlink_manager logic which gracefully handles junction fallbacks
             try:
@@ -1649,7 +1785,7 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_vault_search(self):
         try:
-            from urllib.parse import urlparse, parse_qs
+    
             qs = parse_qs(urlparse(self.path).query)
             q = qs.get("query", [""])[0]
             limit = int(qs.get("limit", [50])[0])
@@ -1658,9 +1794,8 @@ class AIWebServer(BaseHTTPRequestHandler):
                 return self.send_api_models()
                 
             logging.info(f"Performing semantic search for: {q}")
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
-            db = MetadataDB(self.db_path)
+
+            db = _get_db()
             from embedding_engine import EmbeddingEngine
             engine = EmbeddingEngine(self.db_path)
             results = engine.search(q, top_k=limit)
@@ -1690,9 +1825,8 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_get_all_tags(self):
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
-            db = MetadataDB(self.db_path)
+
+            db = _get_db()
             tags = db.get_all_user_tags()
             self.send_json_response({"status": "success", "tags": tags})
         except Exception as e:
@@ -1705,9 +1839,8 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Missing hash or tag"}, 400)
             return
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
-            db = MetadataDB(self.db_path)
+
+            db = _get_db()
             db.add_user_tag(hash_val, tag.strip())
             self.send_json_response({"status": "success"})
         except Exception as e:
@@ -1720,16 +1853,15 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Missing hash or tag"}, 400)
             return
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
-            db = MetadataDB(self.db_path)
+
+            db = _get_db()
             db.remove_user_tag(hash_val, tag.strip())
             self.send_json_response({"status": "success"})
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
     def handle_hf_search(self):
-        from urllib.parse import urlparse, parse_qs
+
         qs = parse_qs(urlparse(self.path).query)
         query = qs.get("query", [""])[0]
         type_filter = qs.get("type", [""])[0]
@@ -1747,14 +1879,8 @@ class AIWebServer(BaseHTTPRequestHandler):
             filter_tags = type_filter.lower()
         
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
             from hf_client import HFClient
-            settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
-            api_key = None
-            if os.path.exists(settings_path):
-                with open(settings_path, 'r') as f:
-                    s = json.load(f)
-                    api_key = s.get("hf_api_key")
+            api_key = _get_settings().get("hf_api_key")
             
             client = HFClient(api_key=api_key)
             result = client.search_models(query=query, limit=limit, offset=offset, filter_tags=filter_tags)
@@ -1764,12 +1890,11 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_import_scan(self, data):
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
+
             from import_engine import start_import
             
             vault_dir = os.path.join(self.root_dir, "Global_Vault")
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+            db = _get_db()
             
             known_filenames = db.get_all_filenames()
             
@@ -1799,9 +1924,8 @@ class AIWebServer(BaseHTTPRequestHandler):
             return
 
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+
+            db = _get_db()
             manifest = db.export_models_metadata(filenames)
 
             if not include_files:
@@ -1816,7 +1940,6 @@ class AIWebServer(BaseHTTPRequestHandler):
             # Streaming zip export with model files + manifest
             import zipfile
             import io
-            import time as _time
 
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
@@ -1833,7 +1956,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                         zf.write(filepath, arcname)
 
             zip_bytes = buf.getvalue()
-            ts = _time.strftime('%Y%m%d_%H%M%S')
+            ts = time.strftime('%Y%m%d_%H%M%S')
             filename = f"vault_export_{ts}.zip"
 
             self.send_response(200)
@@ -1848,42 +1971,50 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
     def handle_server_status(self):
-        global _vault_size_cache
+        global _vault_size_cache, _server_stats_cache
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+            db = _get_db()
             
-            unpopulated = len(db.get_unpopulated_models())
+            # Use cached settings instead of reading 627KB JSON every 3 seconds
+            settings_data = _get_settings()
+            lan_sharing = settings_data.get("lan_sharing", False)
+            vault_size_warning_gb = settings_data.get('vault_size_warning_gb', 50)
+            activity_cleared_at = settings_data.get('activity_cleared_at', 0)
 
-            # Dashboard analytics stats
-            stats = db.get_dashboard_stats()
+            # Cache expensive DB queries with 30s TTL (polled every 3s = 10x reduction)
+            now = time.time()
+            if _server_stats_cache["data"] is None or now >= _server_stats_cache["expires"]:
+                unpopulated = len(db.get_unpopulated_models())
+                stats = db.get_dashboard_stats()
+                raw_generations = db.get_recent_activity(limit=5)
+                category_distribution = db.get_vault_category_distribution()
+                _server_stats_cache["data"] = {
+                    "unpopulated": unpopulated,
+                    "stats": stats,
+                    "raw_generations": raw_generations,
+                    "category_distribution": category_distribution
+                }
+                _server_stats_cache["expires"] = now + _SERVER_STATS_TTL
+            
+            cached = _server_stats_cache["data"]
+            unpopulated = cached["unpopulated"]
+            stats = cached["stats"]
+            raw_generations = cached["raw_generations"]
+            category_distribution = cached["category_distribution"]
             
             downloads_file = os.path.join(self.root_dir, ".backend", "cache", "downloads.json")
             active_downloads = 0
             recent_downloads = []
             if os.path.exists(downloads_file):
-                with open(downloads_file, 'r') as f:
-                    jobs = json.load(f)
-                    active_downloads = sum(1 for j in jobs.values() if j.get("status") not in ["completed", "failed", "error"])
-                    # Sprint 9: Recent completed downloads for activity feed
-                    completed = [{"id": k, **v} for k, v in jobs.items() if v.get("status") == "completed"]
-                    completed.sort(key=lambda x: x.get("completed_at", ""), reverse=True)
-                    recent_downloads = completed[:5]
-            
-            # Load settings once for LAN sharing + disk warning + activity clear
-            settings_path = os.path.join(self.root_dir, ".backend", "settings.json")
-            settings_data = {}
-            if os.path.exists(settings_path):
                 try:
-                    with open(settings_path, 'r', encoding='utf-8') as f:
-                        settings_data = json.load(f)
+                    with open(downloads_file, 'r') as f:
+                        jobs = json.load(f)
+                        active_downloads = sum(1 for j in jobs.values() if j.get("status") not in ["completed", "failed", "error"])
+                        completed = [{"id": k, **v} for k, v in jobs.items() if v.get("status") == "completed"]
+                        completed.sort(key=lambda x: x.get("completed_at", ""), reverse=True)
+                        recent_downloads = completed[:5]
                 except (json.JSONDecodeError, OSError):
                     pass
-
-            lan_sharing = settings_data.get("lan_sharing", False)
-            vault_size_warning_gb = settings_data.get('vault_size_warning_gb', 50)
-            activity_cleared_at = settings_data.get('activity_cleared_at', 0)
 
             lan_ip = ""
             if lan_sharing:
@@ -1896,21 +2027,23 @@ class AIWebServer(BaseHTTPRequestHandler):
                 except Exception:
                     lan_ip = "unknown"
 
-            # Sprint 9: Vault size with 60-second cache TTL
-            now = time.time()
-            if now >= _vault_size_cache["expires"]:
-                vault_dir = os.path.join(self.root_dir, "Global_Vault")
-                vault_size_bytes = 0
-                if os.path.exists(vault_dir):
-                    for root, dirs, files in os.walk(vault_dir):
-                        for f in files:
-                            try:
-                                vault_size_bytes += os.path.getsize(os.path.join(root, f))
-                            except OSError:
-                                pass
-                _vault_size_cache["size"] = vault_size_bytes
-                _vault_size_cache["expires"] = now + 60
+            # Vault size: read from cache (updated by background scanner or 60s inline fallback)
             vault_size_bytes = _vault_size_cache["size"]
+            if vault_size_bytes == 0 and now >= _vault_size_cache["expires"]:
+                # First-time only fallback if background scanner hasn't run yet
+                def _calc_vault_size():
+                    vault_dir = os.path.join(self.root_dir, "Global_Vault")
+                    total = 0
+                    if os.path.exists(vault_dir):
+                        for root, dirs, files in os.walk(vault_dir):
+                            for f in files:
+                                try:
+                                    total += os.path.getsize(os.path.join(root, f))
+                                except OSError:
+                                    pass
+                    _vault_size_cache["size"] = total
+                    _vault_size_cache["expires"] = time.time() + 300  # 5 min TTL
+                threading.Thread(target=_calc_vault_size, daemon=True).start()
 
             # Installed / running packages
             packages_dir = os.path.join(self.root_dir, "packages")
@@ -1919,20 +2052,15 @@ class AIWebServer(BaseHTTPRequestHandler):
                 installed_packages = sum(1 for d in os.listdir(packages_dir) if os.path.isdir(os.path.join(packages_dir, d)))
             running_packages = len(AIWebServer.running_processes)
 
-            # Sprint 9: Recent activity + category distribution
-            raw_generations = db.get_recent_activity(limit=5)
+            # Filter recent activity by cleared-at timestamp
             recent_generations = []
             for g in raw_generations:
-                # Isoformat from DB 'created_at' looks like '2024-05-15 14:30:22.123456'
-                # parse and compare to activity_cleared_at (epoch)
                 try:
                     dt = datetime.datetime.strptime(g.get("created_at", ""), "%Y-%m-%d %H:%M:%S.%f")
                     if dt.timestamp() > activity_cleared_at:
                         recent_generations.append(g)
                 except Exception:
-                    recent_generations.append(g) # Fallback if parsing fails
-                    
-            category_distribution = db.get_vault_category_distribution()
+                    recent_generations.append(g)
 
             self.send_json_response({
                 "unpopulated_models": unpopulated,
@@ -1940,18 +2068,15 @@ class AIWebServer(BaseHTTPRequestHandler):
                 "is_syncing": (unpopulated > 0 or active_downloads > 0),
                 "lan_sharing": lan_sharing,
                 "lan_ip": lan_ip,
-                # Sprint 8: Dashboard analytics
                 "total_models": stats.get('total_models', 0),
                 "total_generations": stats.get('total_generations', 0),
                 "prompts_saved": stats.get('prompts_saved', 0),
                 "vault_size_bytes": vault_size_bytes,
                 "installed_packages": installed_packages,
                 "running_packages": running_packages,
-                # Sprint 9: Dashboard intelligence
                 "recent_generations": recent_generations,
                 "recent_downloads": recent_downloads,
                 "category_distribution": category_distribution,
-                # Sprint 10: Disk space warning
                 "vault_size_warning_gb": vault_size_warning_gb
             })
         except Exception as e:
@@ -1967,9 +2092,8 @@ class AIWebServer(BaseHTTPRequestHandler):
             return
 
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+
+            db = _get_db()
             result = db.import_models_metadata(manifest)
             self.send_json_response({
                 "status": "success",
@@ -1998,6 +2122,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             return
 
         job_ids = []
+        start_worker = False
         with _batch_lock:
             for p in payloads:
                 job_id = str(uuid.uuid4())[:8]
@@ -2010,9 +2135,12 @@ class AIWebServer(BaseHTTPRequestHandler):
                     "created_at": time.time()
                 })
                 job_ids.append(job_id)
+            # Atomic check-then-set under lock to prevent double workers
+            if not _batch_worker_running:
+                _batch_worker_running = True
+                start_worker = True
 
-        # Start worker thread if not running
-        if not _batch_worker_running:
+        if start_worker:
             t = threading.Thread(target=self._batch_worker, daemon=False)
             t.start()
 
@@ -2043,7 +2171,6 @@ class AIWebServer(BaseHTTPRequestHandler):
     def _batch_worker():
         """Background worker that processes batch generation queue sequentially."""
         global _batch_worker_running
-        _batch_worker_running = True
         logging.info("Batch generation worker started.")
 
         while True:
@@ -2056,41 +2183,31 @@ class AIWebServer(BaseHTTPRequestHandler):
                         break
 
             if not job:
-                _batch_worker_running = False
+                with _batch_lock:
+                    _batch_worker_running = False
+                    # Purge completed/failed jobs beyond max history to prevent memory bloat
+                    terminal = [j for j in _batch_queue if j["status"] in ("done", "failed")]
+                    if len(terminal) > _BATCH_MAX_HISTORY:
+                        # Keep only the most recent ones
+                        terminal.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+                        ids_to_keep = {j["id"] for j in terminal[:_BATCH_MAX_HISTORY]}
+                        _batch_queue[:] = [j for j in _batch_queue if j["status"] in ("pending", "running") or j["id"] in ids_to_keep]
                 logging.info("Batch generation worker finished — queue empty.")
                 break
 
             try:
-                import urllib.request
-                # Determine backend from payload
                 backend = job["payload"].get("backend", "comfyui")
-                proxy_map = {
-                    "comfyui": "http://127.0.0.1:8188",
-                    "a1111": "http://127.0.0.1:7860",
-                    "forge": "http://127.0.0.1:7861",
-                    "fooocus": "http://127.0.0.1:8888"
-                }
-                base_url = proxy_map.get(backend, "http://127.0.0.1:8188")
+                engine = _ENGINE_CONFIG.get(backend, _ENGINE_CONFIG["comfyui"])
+                port = engine["port"]
+                translator = engine["translator"]
+                base_url = f"http://127.0.0.1:{port}"
 
-                # Build translated payload
-                root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                sys.path.insert(0, os.path.join(root_dir, ".backend"))
-
-                if backend == "comfyui":
-                    from proxy_translators import build_comfy_workflow
-                    translated = build_comfy_workflow(job["payload"])
-                    endpoint = "/prompt"
-                elif backend in ("a1111", "forge"):
-                    from proxy_translators import build_a1111_payload
-                    translated = build_a1111_payload(job["payload"])
-                    endpoint = "/sdapi/v1/img2img" if "init_images" in translated else "/sdapi/v1/txt2img"
-                elif backend == "fooocus":
-                    from proxy_translators import build_fooocus_payload
-                    translated = build_fooocus_payload(job["payload"])
-                    endpoint = "/v1/generation/text-to-image"
+                translated = translator(job["payload"])
+                # Determine correct endpoint (img2img vs txt2img for A1111/Forge)
+                if backend in ("a1111", "forge") and "init_images" in translated:
+                    endpoint = "/sdapi/v1/img2img"
                 else:
-                    translated = job["payload"]
-                    endpoint = "/prompt"
+                    endpoint = engine["gen_endpoint"]
 
                 url = f"{base_url}{endpoint}"
                 req = urllib.request.Request(
@@ -2104,6 +2221,10 @@ class AIWebServer(BaseHTTPRequestHandler):
                 with _batch_lock:
                     job["status"] = "done"
                     job["result"] = content
+                    # Strip base64 images from completed jobs to save memory
+                    if isinstance(content, dict) and "images" in content:
+                        job["result"] = {k: v for k, v in content.items() if k != "images"}
+                        job["result"]["_image_count"] = len(content["images"])
                 logging.info(f"Batch job {job['id']} completed.")
 
             except Exception as e:
@@ -2117,13 +2238,12 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     def handle_list_prompts(self):
         try:
-            from urllib.parse import urlparse, parse_qs
+    
             qs = parse_qs(urlparse(self.path).query)
             search = qs.get("search", [None])[0]
             limit = int(qs.get("limit", [100])[0])
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+
+            db = _get_db()
             prompts = db.list_prompts(search=search, limit=limit)
             self.send_json_response({"status": "success", "prompts": prompts})
         except Exception as e:
@@ -2135,9 +2255,8 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Title is required"}, 400)
             return
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+
+            db = _get_db()
             row_id = db.save_prompt(
                 title=title,
                 prompt=data.get("prompt", ""),
@@ -2156,15 +2275,69 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Missing id"}, 400)
             return
         try:
-            sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-            from metadata_db import MetadataDB
-            db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+
+            db = _get_db()
             db.delete_prompt(prompt_id)
             self.send_json_response({"status": "success"})
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
     # ── Bulk Vault Operations Handler ──────────────────────────────
+
+    # ── Sprint 12: Ollama Prompt Enhancement ──────────────────────────
+
+    def handle_ollama_status(self):
+        """GET /api/ollama/status — Check if local Ollama is running"""
+
+        try:
+            req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode())
+                models = [m.get("name", "") for m in data.get("models", [])]
+                self.send_json_response({"online": True, "models": models})
+        except Exception:
+            self.send_json_response({"online": False, "models": []})
+
+    def handle_ollama_enhance(self, data):
+        """POST /api/ollama/enhance — Enhance a prompt using Ollama"""
+
+        prompt = data.get("prompt", "")
+        model = data.get("model", "llama3.2")
+        
+        if not prompt.strip():
+            self.send_json_response({"error": "Empty prompt"}, 400)
+            return
+
+        system_msg = (
+            "You are an expert Stable Diffusion prompt engineer. "
+            "Given a user's rough prompt idea, rewrite it as a detailed, high-quality image generation prompt. "
+            "Include specific artistic styles, lighting, composition, and quality tags. "
+            "Output ONLY the enhanced prompt text, no explanations or markdown. "
+            "Keep the prompt under 200 words."
+        )
+        
+        ollama_payload = json.dumps({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": f"Enhance this prompt for image generation: {prompt}"}
+            ],
+            "stream": False
+        }).encode()
+        
+        try:
+            req = urllib.request.Request(
+                "http://127.0.0.1:11434/api/chat",
+                data=ollama_payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                result = json.loads(resp.read().decode())
+                enhanced = result.get("message", {}).get("content", "")
+                self.send_json_response({"enhanced_prompt": enhanced.strip()})
+        except Exception as e:
+            self.send_json_response({"error": f"Ollama request failed: {str(e)}"}, 500)
 
     def handle_vault_bulk_delete(self, data):
         models = data.get("models", [])
@@ -2196,9 +2369,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         # Batch remove DB entries
         if filenames_to_remove:
             try:
-                sys.path.insert(0, os.path.join(self.root_dir, ".backend"))
-                from metadata_db import MetadataDB
-                db = MetadataDB(os.path.join(self.root_dir, ".backend", "metadata.sqlite"))
+                db = _get_db()
                 db.remove_models_by_filenames(filenames_to_remove)
             except Exception as e:
                 logging.error(f"DB cleanup after bulk delete failed: {e}")
@@ -2209,12 +2380,64 @@ class AIWebServer(BaseHTTPRequestHandler):
             "failed": failed
         })
 
+    # ── Favorites Handlers (SQLite-backed, replaces settings.json blob) ──
+    def handle_get_favorites(self):
+        try:
+            db = _get_db()
+            favs = db.get_all_favorites()
+            self.send_json_response(favs)
+        except Exception as e:
+            logging.error(f"Failed to get favorites: {e}")
+            self.send_json_response({})
+
+    def handle_add_favorite(self, data):
+        model_id = data.get("model_id")
+        model_data = data.get("data", {})
+        if not model_id:
+            self.send_json_response({"error": "model_id required"}, 400)
+            return
+        try:
+            db = _get_db()
+            db.add_favorite(str(model_id), json.dumps(model_data))
+            self.send_json_response({"status": "ok"})
+        except Exception as e:
+            logging.error(f"Failed to add favorite: {e}")
+            self.send_json_response({"error": str(e)}, 500)
+
+    def handle_remove_favorite(self, data):
+        model_id = data.get("model_id")
+        if not model_id:
+            self.send_json_response({"error": "model_id required"}, 400)
+            return
+        try:
+            db = _get_db()
+            db.remove_favorite(str(model_id))
+            self.send_json_response({"status": "ok"})
+        except Exception as e:
+            logging.error(f"Failed to remove favorite: {e}")
+            self.send_json_response({"error": str(e)}, 500)
 
 
 
 def start_background_scanners():
     """Starts background scanners and embedding engine"""
     global embedding_process
+
+    # ── One-time favorites migration: settings.json → SQLite ──
+    try:
+        settings = _get_settings()
+        if settings.get("favorites") and not settings.get("favorites_migrated_to_db"):
+            favs = settings["favorites"]
+            if isinstance(favs, dict) and len(favs) > 0:
+                db = _get_db()
+                db.bulk_import_favorites(favs)
+                # Remove from settings.json to shrink it
+                settings.pop("favorites", None)
+                settings["favorites_migrated_to_db"] = True
+                _save_settings(settings)
+                logging.info(f"[MIGRATION] Migrated {len(favs)} favorites from settings.json to SQLite")
+    except Exception as e:
+        logging.warning(f"[MIGRATION] Favorites migration failed (non-fatal): {e}")
 
     def _run_scanners():
         global embedding_process
@@ -2243,16 +2466,18 @@ def start_background_scanners():
                 print(f"[SERVER] Embedding engine started with PID: {embedding_process.pid}")
 
             # Background Vault and CivitAI Indexing Loop
-            import time
+            # Create scanner instances once, sharing the cached DB singleton
+            from vault_crawler import VaultCrawler
+            from civitai_client import CivitaiClient
+            
+            shared_db = _get_db()
+            crawler = VaultCrawler(root_dir, db=shared_db)
+            civitai = CivitaiClient(root_dir, db=shared_db)
+            
             while True:
                 try:
-                    if os.path.join(root_dir, ".backend") not in sys.path:
-                        sys.path.insert(0, os.path.join(root_dir, ".backend"))
-                    from vault_crawler import VaultCrawler
-                    from civitai_client import CivitaiClient
-                    
-                    VaultCrawler(root_dir).crawl()
-                    CivitaiClient(root_dir).process_unpopulated_models()
+                    crawler.crawl()
+                    civitai.process_unpopulated_models()
                 except Exception as sc_e:
                     print(f"[SERVER] Background scanners iteration error: {sc_e}")
                 
@@ -2280,14 +2505,7 @@ def run_server(port=8080):
         logging.error(f"[SERVER] Pre-flight Bootstrap Failed: {e}")
         
     # Check settings for LAN sharing
-    settings_path = os.path.join(root_dir, ".backend", "settings.json")
-    lan_sharing = False
-    if os.path.exists(settings_path):
-        try:
-            with open(settings_path, 'r') as f:
-                lan_sharing = json.load(f).get("lan_sharing", False)
-        except (json.JSONDecodeError, OSError):
-            pass
+    lan_sharing = _get_settings().get("lan_sharing", False)
 
     host = '0.0.0.0' if lan_sharing else ''
     server_address = (host, port)

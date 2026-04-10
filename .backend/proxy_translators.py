@@ -1,4 +1,5 @@
 import random
+import os
 
 def get_hires_upscaler_params(name):
     if 'latent' in name.lower():
@@ -33,6 +34,8 @@ def build_comfy_workflow(payload: dict) -> dict:
     controlnet = payload.get("controlnet", {})
     refiner_name = payload.get("refiner", "none")
     refiner_steps = int(payload.get("refiner_steps", 10))
+    mask_image = payload.get("mask_image_name", "")  # Sprint 12: inpainting mask
+    regions = payload.get("regions", [])  # Sprint 12: regional prompting
     
     # Model Type
     model_type = payload.get("model_type", "sdxl")
@@ -52,7 +55,6 @@ def build_comfy_workflow(payload: dict) -> dict:
             raise ValueError("FLUX requires a UNET model.")
         
         if vae_name == "none":
-            import os
             try:
                 # Resolve Global_Vault/vae path
                 vae_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Global_Vault", "vaes")
@@ -105,6 +107,14 @@ def build_comfy_workflow(payload: dict) -> dict:
             workflow["1001"] = {"inputs": {"image": init_image}, "class_type": "LoadImage"}
             workflow["1002"] = {"inputs": {"pixels": ["1001", 0], "vae": ["13", 0]}, "class_type": "VAEEncode"}
             final_latent_source = ["1002", 0]
+            # Sprint 12: Inpainting mask
+            if mask_image:
+                workflow["2001"] = {"inputs": {"image": mask_image, "channel": "red"}, "class_type": "LoadImageMask"}
+                workflow["2002"] = {
+                    "inputs": {"samples": final_latent_source, "mask": ["2001", 0]},
+                    "class_type": "SetLatentNoiseMask"
+                }
+                final_latent_source = ["2002", 0]
             
         # ControlNet
         if controlnet and controlnet.get("enable") and controlnet.get("image"):
@@ -126,6 +136,44 @@ def build_comfy_workflow(payload: dict) -> dict:
             }
             pos_cond = ["1005", 0]
             neg_cond = ["1005", 1]
+
+        # Sprint 12: Regional Prompting
+        if regions and len(regions) > 0:
+            clip_source = ["12", 0]
+            region_idx = 3001
+            combined_cond = None
+            for r in regions:
+                # CLIPTextEncode for this zone
+                workflow[str(region_idx)] = {"inputs": {"text": r["prompt"], "clip": clip_source}, "class_type": "CLIPTextEncode"}
+                region_cond = [str(region_idx), 0]
+                region_idx += 1
+                # FluxGuidance for this zone's conditioning
+                workflow[str(region_idx)] = {"inputs": {"guidance": flux_guidance, "conditioning": region_cond}, "class_type": "FluxGuidance"}
+                region_cond = [str(region_idx), 0]
+                region_idx += 1
+                # ConditioningSetArea (pixel coords)
+                px_x = int(r["x"] * width)
+                px_y = int(r["y"] * height)
+                px_w = max(64, int(r["w"] * width))
+                px_h = max(64, int(r["h"] * height))
+                workflow[str(region_idx)] = {
+                    "inputs": {"conditioning": region_cond, "x": px_x, "y": px_y, "width": px_w, "height": px_h, "strength": 1.0},
+                    "class_type": "ConditioningSetArea"
+                }
+                area_cond = [str(region_idx), 0]
+                region_idx += 1
+                # Combine with previous
+                if combined_cond is None:
+                    combined_cond = area_cond
+                else:
+                    workflow[str(region_idx)] = {
+                        "inputs": {"conditioning_1": combined_cond, "conditioning_2": area_cond},
+                        "class_type": "ConditioningCombine"
+                    }
+                    combined_cond = [str(region_idx), 0]
+                    region_idx += 1
+            if combined_cond:
+                pos_cond = combined_cond
 
         workflow["18"] = {
             "inputs": {
@@ -224,6 +272,14 @@ def build_comfy_workflow(payload: dict) -> dict:
         workflow["1001"] = {"inputs": {"image": init_image}, "class_type": "LoadImage"}
         workflow["1002"] = {"inputs": {"pixels": ["1001", 0], "vae": current_vae_source}, "class_type": "VAEEncode"}
         final_latent_source = ["1002", 0]
+        # Sprint 12: Inpainting mask
+        if mask_image:
+            workflow["2001"] = {"inputs": {"image": mask_image, "channel": "red"}, "class_type": "LoadImageMask"}
+            workflow["2002"] = {
+                "inputs": {"samples": final_latent_source, "mask": ["2001", 0]},
+                "class_type": "SetLatentNoiseMask"
+            }
+            final_latent_source = ["2002", 0]
         
     # ControlNet
     if controlnet and controlnet.get("enable") and controlnet.get("image"):
@@ -246,6 +302,39 @@ def build_comfy_workflow(payload: dict) -> dict:
         pos_cond = ["1005", 0]
         neg_cond = ["1005", 1]
         
+    # Sprint 12: Regional Prompting (SD/SDXL)
+    if regions and len(regions) > 0:
+        region_idx = 3001
+        combined_cond = None
+        for r in regions:
+            # CLIPTextEncode for this zone
+            workflow[str(region_idx)] = {"inputs": {"text": r["prompt"], "clip": current_clip_source}, "class_type": "CLIPTextEncode"}
+            region_cond = [str(region_idx), 0]
+            region_idx += 1
+            # ConditioningSetArea (pixel coords)
+            px_x = int(r["x"] * width)
+            px_y = int(r["y"] * height)
+            px_w = max(64, int(r["w"] * width))
+            px_h = max(64, int(r["h"] * height))
+            workflow[str(region_idx)] = {
+                "inputs": {"conditioning": region_cond, "x": px_x, "y": px_y, "width": px_w, "height": px_h, "strength": 1.0},
+                "class_type": "ConditioningSetArea"
+            }
+            area_cond = [str(region_idx), 0]
+            region_idx += 1
+            # Combine with previous
+            if combined_cond is None:
+                combined_cond = area_cond
+            else:
+                workflow[str(region_idx)] = {
+                    "inputs": {"conditioning_1": combined_cond, "conditioning_2": area_cond},
+                    "class_type": "ConditioningCombine"
+                }
+                combined_cond = [str(region_idx), 0]
+                region_idx += 1
+        if combined_cond:
+            pos_cond = combined_cond
+    
     # Base Sampler / Refiner
     use_refiner = (refiner_name and refiner_name != "none")
     
@@ -344,6 +433,14 @@ def build_a1111_payload(payload: dict) -> dict:
         if name and name.endswith(".safetensors"):
             name = name[:-12]  # strip extension for A1111
         final_prompt += f" <lora:{name}:{lora.get('weight', 1.0)}>"
+    
+    # Sprint 12: Regional Prompting via BREAK delimiters
+    regions = payload.get("regions", [])
+    if regions and len(regions) > 0:
+        region_prompts = [r["prompt"] for r in regions if r.get("prompt", "").strip()]
+        if region_prompts:
+            # Prepend main prompt as global context, then BREAK per zone
+            final_prompt = final_prompt + " BREAK " + " BREAK ".join(region_prompts)
         
     result = {
         "prompt": final_prompt,
@@ -366,6 +463,14 @@ def build_a1111_payload(payload: dict) -> dict:
     if b64_image:
         result["init_images"] = [b64_image]
         result["denoising_strength"] = float(payload.get("denoising_strength", 0.5))
+        # Sprint 12: Inpainting mask
+        mask_b64 = payload.get("mask_b64")
+        if mask_b64:
+            result["mask"] = mask_b64
+            result["inpainting_fill"] = 1  # 0=fill, 1=original, 2=latent_noise, 3=latent_nothing
+            result["mask_blur"] = 4
+            result["inpaint_full_res"] = True
+            result["inpaint_full_res_padding"] = 32
         
     # High-Res Fix
     hires = payload.get("hires", {})

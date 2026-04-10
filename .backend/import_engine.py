@@ -16,6 +16,7 @@ import shutil
 import hashlib
 import logging
 import threading
+import time
 from typing import Optional
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -46,9 +47,19 @@ CATEGORY_MAP = {
     "misc": "misc",
 }
 
-# Global state dict: import_id -> {status, message, progress, deps}
+# Global state dict: import_id -> {status, message, progress, deps, _completed_at}
 _import_jobs: dict = {}
 _lock = threading.Lock()
+_IMPORT_JOB_TTL = 300  # Purge completed jobs older than 5 minutes
+
+def _purge_stale_jobs():
+    """Remove completed/error jobs older than _IMPORT_JOB_TTL seconds."""
+    now = time.time()
+    stale = [k for k, v in _import_jobs.items()
+             if v.get("status") in ("done", "error")
+             and now - v.get("_completed_at", now) > _IMPORT_JOB_TTL]
+    for k in stale:
+        del _import_jobs[k]
 
 
 def _hash_file(path: str) -> Optional[str]:
@@ -131,9 +142,6 @@ def _extract_dependencies(metadata: dict) -> list:
 
 def _run_import(import_id: str, src_path: str, category: str, root_dir: str, api_key: str = ""):
     """Background worker thread that performs the full import pipeline."""
-    import sys
-    sys.path.insert(0, os.path.join(root_dir, ".backend"))
-
     from metadata_db import MetadataDB
     from civitai_client import CivitaiClient
 
@@ -188,16 +196,7 @@ def _run_import(import_id: str, src_path: str, category: str, root_dir: str, api
             _update("thumbnail", "Downloading preview image...", progress=80)
             images = civitai_data.get("images", [])
             if images:
-                # Prefer static images over videos (videos can be 40MB+)
-                image_url = None
-                for img_entry in images:
-                    if img_entry.get("type", "image") != "video":
-                        image_url = img_entry.get("url")
-                        if image_url:
-                            break
-                # Fallback: use first entry if no static images
-                if not image_url:
-                    image_url = images[0].get("url")
+                image_url = CivitaiClient._select_thumbnail_url(civitai_data)
                 if image_url:
                     thumbnail_path = client.download_thumbnail(image_url, file_hash)
                     if thumbnail_path:
@@ -230,6 +229,11 @@ def _run_import(import_id: str, src_path: str, category: str, root_dir: str, api
     except Exception as e:
         logging.exception(f"Import failed for {filename}: {e}")
         _update("error", f"Import failed: {str(e)}")
+    finally:
+        # Mark completion timestamp for auto-purge
+        with _lock:
+            if import_id in _import_jobs:
+                _import_jobs[import_id]["_completed_at"] = time.time()
 
 
 def start_import(src_path: str, category: str, root_dir: str, api_key: str = "") -> str:
@@ -241,6 +245,8 @@ def start_import(src_path: str, category: str, root_dir: str, api_key: str = "")
     final_category = _infer_category(os.path.basename(src_path), category)
     
     with _lock:
+        # Auto-purge old completed jobs before adding new ones
+        _purge_stale_jobs()
         _import_jobs[import_id] = {
             "status": "queued",
             "message": "Queued...",

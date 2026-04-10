@@ -1,6 +1,14 @@
 ---
 name: API Contract Librarian
 description: Lightweight guardian that prevents JSON payload drift between the frontend and backend by maintaining and validating a living Markdown reference of major API endpoint contracts.
+keywords:
+  - API
+  - payload
+  - JSON
+  - contract
+  - drift
+  - endpoint
+  - fetch
 ---
 
 # 📚 API Contract Librarian

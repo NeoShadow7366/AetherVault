@@ -1,6 +1,12 @@
 ---
 name: Safe Test Runner
 description: Executes the QA Guardian test suite within a secure OS-level timeout envelope to prevent orphaned pipelines and infinite deadlocks.
+keywords:
+  - test runner
+  - timeout
+  - deadlock
+  - safe execution
+  - pipeline
 ---
 
 # 🛡️ Safe Test Runner

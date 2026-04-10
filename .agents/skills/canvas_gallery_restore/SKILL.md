@@ -1,6 +1,13 @@
 ---
 name: Canvas Gallery Restore
 description: Manages the My Creations gallery backed by SQLite, including saving generation results with full parameter metadata, browsing with sort/filter, lightbox display, rating, deletion, and drag-and-drop canvas restore that rehydrates all generation parameters back into the Inference Studio.
+keywords:
+  - gallery
+  - creations
+  - lightbox
+  - rating
+  - canvas restore
+  - generation history
 ---
 
 # Canvas Gallery Restore

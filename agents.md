@@ -4,46 +4,8 @@
 
 This file defines the canonical three-layer agent architecture for all AI-assisted development on this project. Any agent (human or automated) modifying this codebase **MUST** read and comply with this document before making changes.
 
----
-
-## 🌌 Generative AI Manager: Complete Feature Matrix
-
-The ultimate, cross-platform orchestrator designed to solve fragmentation in the GenAI Ecosystem. Instead of re-downloading Python environments or duplicating 6GB Stable Diffusion models, the Manager acts as a singular hub automating your Runtimes, APIs, Assets, and Workflows seamlessly.
-
-### 1. Zero-Friction Inference (Multi-Engine Abstraction)
-
-- **Universal Dashboard**: A single, beautifully styled UI parameter board that drives generations across distinct backend engines.
-- **Intelligent Payload Translators**: Automatically maps Prompts, LoRAs, Seeds, Width/Height, ControlNets and Samplers into the native language of the target engine.
-- **Supported Backends**: ComfyUI (dynamic JSON workflow topologies), SD WebUI Forge (`<lora:...>` `<controlnet...>` REST payloads), Automatic1111 (sdapi/v1/txt2img & img2img).
-- **Advanced Img2Img Routing**: Drag-and-drop images onto the Generation Canvas with native denoising_strength support.
-
-### 2. Advanced App Store & Secure Sandbox
-
-- **Config-Driven Recipes**: Install via simple `.json` templates (repo, flags, target dirs).
-- **Isolated Virtual Environments**: Detached `.venv` per app to prevent PyTorch conflicts.
-- **Cross-Platform Portable Hooks**: Bash/Batch scripts using `uname -m` + `python-build-standalone` binaries (Windows, macOS Silicon/Intel, Linux).
-
-### 3. The Global Vault Asset System
-
-- **Drop ANY model once** into `Global_Vault` and use across all engines.
-- **Dynamic Symlinking**: Auto-create Junctions (Windows) or Symbolic Links (UNIX) on app launch.
-- **FLUX.1 Native Tracking**: Full support for clip/unet/checkpoints/loras/embeddings.
-
-### 4. Agentic Metadata & Sync System
-
-- **Ultra-Fast Crawlers**: Async Python threading for near-instant Safetensors hashing.
-- **CivitAI Metadata Scraper**: Hash alignment with Civitai API + thumbnails.
-- **Native HuggingFace Explorer**: Search + async headless downloads.
-- **Real-time Status Syncing**: Live UI Toast system.
-
-### 5. Studio Analytics & Historical Context
-
-- **My Creations Gallery**: Persistent SQLite-backed lightbox with search/delete/scroll.
-- **Drag-And-Drop Canvas Restore**: Thumbnails restore Seed, Steps, Models, Prompt, Configs.
-
-### 6. Self-Healing Code Architecture
-
-- **OTA Ghost Upgrades**: "Update System" button unhooks subprocess, runs `git pull` or zip extraction, patches dashboard without touching Global_Vault or configs.
+For detailed instructions on any skill, read the corresponding `SKILL.md` in `.agents/skills/<skill_name>/`.
+For rules and policies, read the corresponding `.md` in `.agents/rules/`.
 
 ---
 
@@ -53,11 +15,11 @@ The ultimate, cross-platform orchestrator designed to solve fragmentation in the
 
 Generative AI Manager is a singular hub that automates Runtimes, APIs, Assets, and Workflows for the fragmented GenAI ecosystem. Instead of re-downloading Python environments or duplicating 6GB Stable Diffusion models across applications, the Manager provides:
 
-1. **Zero-Friction Inference** — A universal dashboard that drives generations across ComfyUI, SD WebUI Forge, Automatic1111, and Fooocus without altering your workflow.
-2. **Advanced App Store** — Config-driven `.json` recipes that install, isolate, and manage generative applications with detached virtual environments.
-3. **Global Vault** — Drop ANY model once, use it everywhere via zero-byte directory junctions (Windows) or symlinks (UNIX).
-4. **Agentic Metadata** — Ultra-fast crawlers that hash multi-GB safetensors, scrape CivitAI/HuggingFace metadata, and maintain semantic search embeddings.
-5. **Studio Analytics** — Persistent SQLite-backed gallery with drag-and-drop canvas restore.
+1. **Zero-Friction Inference** — Universal dashboard driving ComfyUI, Forge, Automatic1111, and Fooocus.
+2. **Advanced App Store** — Config-driven `.json` recipes with isolated virtual environments.
+3. **Global Vault** — Drop ANY model once, use everywhere via zero-byte directory junctions/symlinks.
+4. **Agentic Metadata** — Ultra-fast crawlers with CivitAI/HuggingFace metadata and semantic search.
+5. **Studio Analytics** — SQLite-backed gallery with drag-and-drop canvas restore.
 6. **Self-Healing Architecture** — OTA ghost upgrades that patch the dashboard without touching user data.
 
 ### Non-Negotiable Requirements
@@ -65,22 +27,22 @@ Generative AI Manager is a singular hub that automates Runtimes, APIs, Assets, a
 | # | Requirement | Rationale |
 |---|-------------|-----------|
 | 1 | **Zero user data loss** | Global_Vault, packages/, cache/thumbnails, metadata.sqlite, and settings.json are sacred. No operation may delete, corrupt, or overwrite them without explicit user consent. |
-| 2 | **Cross-platform parity** | Every feature MUST work on Windows 10/11, macOS (Intel + Apple Silicon), and Linux (x86_64 + arm64). Use `os.name`, `platform.system()`, and `uname -m` for branching. |
-| 3 | **Isolated environments** | Each installed app gets its own `.venv`. PyTorch version conflicts between apps are structurally impossible. |
-| 4 | **No admin/root required** | Windows uses NTFS Directory Junctions (`mklink /J`), not symlinks. UNIX uses standard `os.symlink()`. |
-| 5 | **Portable Python** | The project ships with `python-build-standalone` binaries. System Python is a fallback, never a requirement. |
-| 6 | **Offline-first** | The dashboard must boot and render instantly from local SQLite. Network calls (CivitAI, HuggingFace, OTA) are background-only and failure-tolerant. |
-| 7 | **Single-file frontend** | The UI is a monolithic `index.html` served by our Python HTTP server. No Node.js build step, no npm, no bundler. |
-| 8 | **Subprocess safety** | All spawned processes use `CREATE_NEW_PROCESS_GROUP` on Windows. PIDs are tracked. Orphan detection is mandatory. |
-| 9 | **Never Un-track Developer Architecture** | QA files (`.tests/`), GitHub pipelines (`.github/`), and Agent skills (`.agents/`) MUST remain tracked in Git to preserve CI/CD. Explicitly exclude them inside `build.py` instead of using `.gitignore` or `git rm`. |
+| 2 | **Cross-platform parity** | Every feature MUST work on Windows 10/11, macOS (Intel + Apple Silicon), and Linux (x86_64 + arm64). See `.agents/rules/cross_platform.md` for implementation patterns. |
+| 3 | **Isolated environments** | Each installed app gets its own `.venv`. PyTorch version conflicts are structurally impossible. |
+| 4 | **No admin/root required** | Windows uses NTFS Directory Junctions (`mklink /J`). UNIX uses `os.symlink()`. |
+| 5 | **Portable Python** | Ships with `python-build-standalone` binaries. System Python is a fallback, never a requirement. |
+| 6 | **Offline-first** | Dashboard boots instantly from local SQLite. Network calls are background-only and failure-tolerant. |
+| 7 | **Single-file frontend** | Monolithic `index.html` served by Python HTTP server. No Node.js, no npm, no bundler. |
+| 8 | **Subprocess safety** | All spawned processes use `CREATE_NEW_PROCESS_GROUP` on Windows. PIDs are tracked. Orphan detection mandatory. |
+| 9 | **Never Un-track Developer Architecture** | `.tests/`, `.github/`, `.agents/` remain Git-tracked. Exclude in `build.py` instead of `.gitignore`. |
 
 ### Success Metrics
 
-- **< 2s** cold-start to dashboard render (local SQLite bootstrap)
-- **0 duplicate model bytes** across any number of installed engines
-- **100%** of CivitAI-listed models resolve metadata within one background scan cycle
-- **Zero** cross-app PyTorch conflicts (venv isolation guarantee)
-- **< 500ms** inference proxy round-trip to any backend engine on localhost
+- **< 2s** cold-start to dashboard render
+- **0 duplicate model bytes** across engines
+- **100%** CivitAI metadata resolution per scan cycle
+- **Zero** cross-app PyTorch conflicts
+- **< 500ms** inference proxy round-trip on localhost
 
 ---
 
@@ -88,295 +50,101 @@ Generative AI Manager is a singular hub that automates Runtimes, APIs, Assets, a
 
 ### Agent Hierarchy (Chain of Command)
 
-1. **Human User** – Final and absolute authority. Only the user can approve rule overrides, architectural changes, or accept Architectural Decision Records (ADRs).
-2. **Architecture Guardian (Monolith Sentinel)** – Ultimate technical authority on all structural matters. Has veto power over code structure, tool additions, library imports, system boundaries, and any changes that could impact zero-dependency or long-term maintainability. Overrules QA Guardian and all lower agents.
-3. **QA Guardian** – Authority over testing, functional correctness, bug fixes, and quality. Can implement fixes, but MUST yield immediately to the Architecture Guardian if a fix threatens architectural guidelines or zero-dependency principles.
-4. **Specialized Diagnostics (Health Doctor & API Librarian)** – Read-only advisory roles. They provide telemetry, insights, and recommendations but have no authority to dictate or implement architectural changes. They escalate observations upward.
-5. **Worker Agents / Skills (Installers, Crawlers, Routers, etc.)** – Pure execution layer. They have zero authority to create, modify, or override rules or guidelines. They execute tasks within the defined boundaries.
+1. **Human User** – Final authority. Approves rule overrides, architectural changes, ADRs.
+2. **Architecture Guardian** – Technical authority on structure. Veto on code structure, dependencies, system boundaries. → See [SKILL.md](file:///g:/AG%20SM/.agents/skills/architecture_guardian/SKILL.md)
+3. **QA Guardian** – Authority over testing and correctness. Yields to Architecture Guardian on structural matters. → See [SKILL.md](file:///g:/AG%20SM/.agents/skills/qa_guardian_agent/SKILL.md)
+4. **Diagnostics (Health Doctor & API Librarian)** – Read-only advisory. Escalate upward. → See respective SKILL.md files.
+5. **Worker Agents / Skills** – Pure execution layer. Zero authority to create or modify rules.
 
-#### Conflict Resolution Matrix
+#### Conflict Resolution
 
-| Conflict Type | Primary Deciding Authority | Escalation Path |
-| :--- | :--- | :--- |
+| Conflict Type | Deciding Authority | Escalation |
+|:---|:---|:---|
 | Dependency, Structure, Tools | Architecture Guardian | → Human User |
-| Testing, Functional Correctness | QA Guardian | → Architecture Guardian → Human User |
-| Telemetry / Diagnostic Insights | Diagnostics (advisory only) | → Relevant Guardian |
+| Testing, Correctness | QA Guardian | → Architecture Guardian → Human |
+| Telemetry / Diagnostics | Advisory only | → Relevant Guardian |
 | New Rule or Memory Update | Human User only | N/A |
-| Any architectural drift risk | Architecture Guardian | → Human User |
 
-### Reasoning Style: Chain-of-Thought with Red-Team Review
+### Reasoning Pipeline
 
-Every code change follows this mandatory reasoning pipeline:
-
+Every code change follows:
 ```
-1. UNDERSTAND  → Read the relevant skill SKILL.md + existing code
-2. PLAN        → Outline the change in natural language (what, why, where)
-3. RED-TEAM    → Ask: "What breaks? What edge case did I miss? What user data could this corrupt?"
-4. IMPLEMENT   → Write the code change
-5. VERIFY      → Run or describe the verification step
-6. DOCUMENT    → Update agents.md, skills, or comments if behavior changed
+1. UNDERSTAND  → Read the relevant SKILL.md + existing code
+2. PLAN        → Outline the change (what, why, where)
+3. RED-TEAM    → "What breaks? What edge case? What data corruption risk?"
+4. IMPLEMENT   → Write the code
+5. VERIFY      → Run or describe verification
+6. DOCUMENT    → Update skills or comments if behavior changed
 ```
 
-### Model Selection & Switching Rules
+### Model Selection
 
-> **Mandatory**: The `intelligent_model_router` skill (`.agents/skills/intelligent_model_router/SKILL.md`) MUST be invoked at the following trigger points:
+> Invoke the [Intelligent Model Router](file:///g:/AG%20SM/.agents/skills/intelligent_model_router/SKILL.md) at phase starts, task-type changes, or when complex reasoning is required. Follow the [model switch confirmation rule](file:///g:/AG%20SM/.agents/rules/model_switch_confirmation.md).
 
-| Trigger | Action |
-|---------|--------|
-| **Start of every major development phase** | Invoke model router → recommend optimal model → switch before work begins |
-| **Performance degradation detected** | Agent output is slow, imprecise, or failing → re-evaluate model selection |
-| **Task-type change** | Switching between architecture planning, coding, debugging, documentation → re-evaluate model |
-| **Complex reasoning required** | Payload translators, symlink logic, FLUX structures, cross-platform branching → escalate to high-capability model |
+### Self-Correction Checklist
 
-#### Decision Tree — Generative AI Manager Tasks
+Before committing any file change:
+- [ ] Respects Non-Negotiable Requirements?
+- [ ] Works on Windows AND UNIX? (Check every `os.path`, `subprocess`, `symlink` call)
+- [ ] Could corrupt `metadata.sqlite`? (Raw SQL without transactions?)
+- [ ] Leaks file handles or subprocess PIDs?
+- [ ] Race condition with background scanners?
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    TASK ARRIVES                                  │
-└──────────────────────┬──────────────────────────────────────────┘
-                       ▼
-            ┌─────────────────────┐
-            │  Classify Complexity │
-            └──────┬──────────────┘
-                   │
-       ┌───────────┼───────────────┐
-       ▼           ▼               ▼
-   [COMPLEX]    [STANDARD]      [FAST]
-       │           │               │
-       ▼           ▼               ▼
- ┌───────────┐ ┌──────────┐  ┌──────────┐
- │Claude Opus│ │ Sonnet / │  │  Flash / │
- │/Thinking  │ │Gemini 3  │  │Gemini 3  │
- │or Gemini 3│ │Pro       │  │Pro Low   │
- │Pro High   │ │          │  │          │
- └───────────┘ └──────────┘  └──────────┘
-```
+### Error Recovery
 
-##### COMPLEX (Claude Opus/Thinking or Gemini 3 Pro High)
-- Inference payload translator design (ComfyUI JSON graph topology, A1111 sdapi mapping)
-- Cross-platform symlink/junction logic with edge-case handling
-- FLUX.1 model structure resolution (clip/unet/text_encoder dependency graphs)
-- Multi-engine architecture decisions and refactors
-- Database schema migrations with backward compatibility
-- OTA update pipeline safety analysis
-- Debugging elusive race conditions in background scanners
+> See `.agents/rules/data_safety.md` for database safety patterns and `.agents/rules/security.md` for subprocess/injection prevention.
 
-##### STANDARD (Sonnet or Gemini 3 Pro)
-- General backend feature implementation (new API endpoints, CRUD operations)
-- Frontend UI components and interactivity (JavaScript/CSS in index.html)
-- Recipe `.json` template creation for new engines
-- Unit/integration test writing
-- Documentation generation and README updates
-- Routine bug fixes with clear stack traces
+**Terminal failures:** Capture stderr + return code. Retry retryable errors (network, file lock) with exponential backoff ×3. Surface non-retryable errors to UI — never swallow silently.
 
-##### FAST (Flash or Gemini 3 Pro Low)
-- Code formatting, linting, and comment cleanup
-- Simple configuration changes (settings.json, gitignore entries)
-- Renaming, reorganization, file moves
-- Quick lookups and factual questions
-- Generating boilerplate (docstrings, type stubs)
-- Resolving trivial syntax errors
+**Subprocess crashes:** Pre-flight check manifest.json + symlinks. On `URLError`, poll process, read `runtime.log` tail, search for `ModuleNotFoundError`. Return structured error to frontend with repair button.
 
-#### Switching Protocol
+**Database failures:** "database is locked" → retry 500ms × 5. "disk I/O error" → surface critical alert, never auto-repair. Schema mismatch → `ALTER TABLE` with `try/except`.
 
-```
-1. PAUSE    → Stop current heavy work (do not abandon context mid-task)
-2. ANALYZE  → Read .agents/skills/intelligent_model_router/SKILL.md
-3. CLASSIFY → Determine task complexity using the decision tree above
-4. RECOMMEND→ State the recommended model and reasoning
-5. REQUEST  → Explicitly ask the user to switch models in the AetherVault UI
-6. WAIT     → Do NOT proceed until user confirms the switch
-7. RESUME   → Continue work with the new model
-```
+### Parallelism Constraints
 
-### Self-Correction Loops
-
-Before committing any file change, the agent must self-check:
-
-- [ ] Does this change respect the Non-Negotiable Requirements table?
-- [ ] Does this change work on Windows AND UNIX? (Check every `os.path`, `subprocess`, `symlink` call)
-- [ ] Could this change corrupt `metadata.sqlite`? (Check for raw SQL without transactions)
-- [ ] Does this change leak file handles or subprocess PIDs?
-- [ ] Is there a race condition with the background scanners?
-- [ ] Was the correct model tier used for this task complexity? (Model Selection check)
-
-If any check fails, **STOP and refactor** before proceeding.
-
-### Error Recovery Policy
-
-#### Terminal Command Failures
-```
-IF command fails:
-  1. Capture stderr + return code
-  2. Log with full context (command, cwd, env vars)
-  3. IF retryable (network timeout, file lock):
-     → Wait 2s, retry up to 3 times with exponential backoff
-  4. IF non-retryable (missing binary, permission denied):
-     → Surface to user via /api/server_status or toast system
-     → NEVER silently swallow the error
-```
-
-#### Subprocess Failures
-```
-IF subprocess.Popen fails or crashes silently:
-  1. Check if binary exists at expected path
-  2. PRE-FLIGHT CHECK: Automatically recover missing manifest.json and recreate missing Global_Vault symlinks before spawning.
-  3. SMART DIAGNOSTICS: If proxy connection is refused (URLError), `poll()` the process. If dead, read runtime.log tail.
-     → Search for `ModuleNotFoundError` or `ImportError`.
-     → Return structured `{"error": "engine_crashed", "missing_module": "..."}` to frontend.
-  4. UI AUTO-REPAIR: Frontend must halt polling and offer a one-click "Repair 🛠️" button that calls `/api/repair_dependency`.
-  5. IF process is zombie:
-     → Force-kill via PID tracking (taskkill /F /T on Windows, SIGKILL on UNIX)
-     → Clean up running_processes dict
-```
-
-#### Database Failures
-```
-IF sqlite3 operation fails:
-  1. IF "database is locked":
-     → Retry with 500ms backoff, max 5 attempts
-     → Consider WAL mode migration
-  2. IF "disk I/O error":
-     → Surface critical alert to user
-     → NEVER attempt auto-repair on user's database
-  3. IF schema mismatch:
-     → Use ALTER TABLE with try/except for backward compatibility (see metadata_db.py pattern)
-```
-
-### Parallel Agent Delegation Rules
-
-| Task Type | Can Parallelize? | Constraint |
-|-----------|-----------------|------------|
-| File hashing (vault_crawler) | ✅ Yes, ThreadPoolExecutor(4) | Never hash and write metadata for same file concurrently |
-| CivitAI API calls | ❌ No | Rate-limited to 1 req/sec with `time.sleep(1)` |
-| HuggingFace API calls | ✅ Yes, up to 3 concurrent | Respect HF rate limits |
-| Package installations | ❌ No | One install at a time to prevent pip lock conflicts |
-| Symlink creation | ❌ No | Sequential to prevent race conditions on directory creation |
-| Background embedding | ✅ Yes, but single model instance | SentenceTransformer is not thread-safe, use single worker loop |
-| Batch generation jobs | ❌ No | Sequential by design — one job at a time through `_batch_worker` |
+| Task Type | Parallel? | Constraint |
+|-----------|----------|------------|
+| File hashing | ✅ ThreadPoolExecutor(4) | No concurrent hash + metadata write on same file |
+| CivitAI API | ❌ | 1 req/sec rate limit |
+| HuggingFace API | ✅ up to 3 | Respect rate limits |
+| Package installs | ❌ | One at a time — pip lock conflicts |
+| Symlink creation | ❌ | Sequential — directory race conditions |
+| Embedding | ✅ single worker | SentenceTransformer not thread-safe |
+| Batch generation | ❌ | Sequential via `_batch_worker` |
 
 ### Skill Discovery
 
-When an agent needs to perform a task, it should:
-1. Check `.agents/skills/` for a matching SKILL.md
-2. Read the SKILL.md `description` field for keyword matching
-3. Follow the skill's exact input/output contract
-4. If no skill matches, check if the task should be a new skill
+Check `.agents/skills/` for a matching SKILL.md → read its `description` → follow input/output contract.
 
-Available skills:
+| Skill | Purpose |
+|-------|---------|
+| [Universal Inference Router](file:///g:/AG%20SM/.agents/skills/universal_inference_router/SKILL.md) | Multi-engine payload translation, proxy dispatch, batch queue |
+| [App Store Installer](file:///g:/AG%20SM/.agents/skills/app_store_installer/SKILL.md) | Config-driven installation with isolated venvs |
+| [Global Vault Symlinker](file:///g:/AG%20SM/.agents/skills/global_vault_symlinker/SKILL.md) | Zero-byte cross-platform directory junctions |
+| [Asset Crawler & Metadata Scraper](file:///g:/AG%20SM/.agents/skills/asset_crawler_metadata_scraper/SKILL.md) | Background indexing, hashing, CivitAI/HF metadata |
+| [Canvas Gallery Restore](file:///g:/AG%20SM/.agents/skills/canvas_gallery_restore/SKILL.md) | My Creations gallery with drag-and-drop restore |
+| [OTA Ghost Updater](file:///g:/AG%20SM/.agents/skills/ota_ghost_updater/SKILL.md) | Self-healing code updates without data loss |
+| [Intelligent Model Router](file:///g:/AG%20SM/.agents/skills/intelligent_model_router/SKILL.md) | AI model tier selection for development tasks |
+| [QA Guardian Agent](file:///g:/AG%20SM/.agents/skills/qa_guardian_agent/SKILL.md) | Automated regression testing on save/commit |
+| [Architecture Guardian](file:///g:/AG%20SM/.agents/skills/architecture_guardian/SKILL.md) | Proactive architectural integrity and zero-dependency enforcement |
+| [Runtime Health Doctor](file:///g:/AG%20SM/.agents/skills/runtime_health_doctor/SKILL.md) | Read-only runtime infrastructure health monitor |
+| [API Contract Librarian](file:///g:/AG%20SM/.agents/skills/api_contract_librarian/SKILL.md) | JSON payload drift prevention between frontend/backend |
+| [Ecosystem Health Dashboard](file:///g:/AG%20SM/.agents/skills/ecosystem_health_dashboard/SKILL.md) | Consolidated guardian ecosystem status overview |
+| [Safe Test Runner](file:///g:/AG%20SM/.agents/skills/safe_test_runner/SKILL.md) | OS-level timeout wrapper for QA tests |
+| [Codebase Analyst](file:///g:/AG%20SM/.agents/skills/codebase_analyst/SKILL.md) | Read-only investigative expert for architecture and code flows |
+| [Codebase Documenter](file:///g:/AG%20SM/.agents/skills/codebase_documenter/SKILL.md) | Generates structured Markdown documentation |
+| [Doc Guardian](file:///g:/AG%20SM/.agents/skills/doc_guardian/SKILL.md) | Manages documentation files with timestamped backups |
 
-| Skill | Location | Purpose |
-|-------|----------|---------|
-| Universal Inference Router | `.agents/skills/universal_inference_router/` | Multi-engine payload translation, proxy dispatch, and batch queue |
-| App Store Installer | `.agents/skills/app_store_installer/` | Config-driven app installation with isolated venvs |
-| Global Vault Symlinker | `.agents/skills/global_vault_symlinker/` | Zero-byte cross-platform directory junctions |
-| Asset Crawler & Metadata Scraper | `.agents/skills/asset_crawler_metadata_scraper/` | Background file indexing, hashing, CivitAI/HF metadata |
-| Canvas Gallery Restore | `.agents/skills/canvas_gallery_restore/` | My Creations gallery with drag-and-drop restore |
-| OTA Ghost Updater | `.agents/skills/ota_ghost_updater/` | Self-healing code updates without data loss |
-| **Intelligent Model Router** | `.agents/skills/intelligent_model_router/` | AI model tier selection for development tasks |
-| **QA Guardian Agent** | `.agents/skills/qa_guardian_agent/` | Automated regression testing on save/commit |
-| **Architecture Guardian** | `.agents/skills/architecture_guardian/` | Proactive architectural integrity and zero-dependency enforcement |
-| **Runtime Health Doctor** | `.agents/skills/runtime_health_doctor/` | Proactive, read-only monitor for runtime infrastructure health |
-| **API Contract Librarian** | `.agents/skills/api_contract_librarian/` | Lightweight guardian preventing JSON payload drift between frontend and backend |
-| **Ecosystem Health Dashboard** | `.agents/skills/ecosystem_health_dashboard/` | Provides a consolidated, read-only overview of the health and status of the entire guardian ecosystem and monolith |
-| **Safe Test Runner** | `.agents/skills/safe_test_runner/` | OS-level timeout wrapper running QA tests securely to prevent infinite test hangs |
+### Rules & Policies
 
----
-
-### QA Guardian Agent
-
-**Purpose**:  
-Executes automated regression testing on save or commit, parses failures, and applies self-healing corrections to maintain the integrity of the monolithic application. Strictly adheres to zero-dependency guidelines.
-
-**Self-Healing Protocol**:
-- QA Guardian now operates under strict rules to preserve architectural integrity.
-- **Cosmetic or minor fixes** (e.g., updating UI locators, syntax errors, adjusting assertions) can be applied directly by the QA Guardian, which will then re-run tests.
-- **Structural, Architectural, Payload, or Infrastructure changes** (e.g., modifying routes in `server.py`, payload shapes in `proxy_translators.py`, subprocess logic, DB interactions, or JSON contracts) MUST be escalated. It generates a proposed diff and hands it off to the Architecture Guardian for review and approval before any change is applied.
-- **CRITICAL RULE**: "Never unilaterally modify core monolith files. Escalate to Architecture Guardian for all cross-boundary or infrastructure changes."
-
-
-### Architecture Guardian (Monolith Sentinel)
-
-**Purpose**:  
-Acts as the proactive gatekeeper for software infrastructure and architectural integrity. Ensures that changes in one part of the monolithic application do not adversely affect other areas while strictly enforcing zero-dependency "AetherVault" principles.
-
-> **Workflow Reference:** See [guardian_workflow.md](file:///g:/AG SM/.agents/visualizations/guardian_workflow.md) for the complete sequence diagram mapping how the Architecture Guardian orchestrates the API Librarian, QA Guardian, Safe Test Runner, and Health Doctor.
-
-**Key Responsibilities**:
-- Protection of zero-dependency rules and AetherVault philosophy
-- Pre-change impact analysis and cross-boundary tracing (frontend → server.py → proxy_translators.py → subprocess sandboxes → Global_Vault/SQLite)
-- Prevention of JSON payload mismatches, database locking issues, zombie processes, and tight coupling
-- Live dependency mapping and safe refactoring guidance
-- Subprocess sandbox and NTFS junction integrity validation
-
-**Collaboration with QA Guardian**:
-- Architecture Guardian: Proactive design review and structural oversight (before/during major changes)
-- QA Guardian: Reactive test execution and regression validation (after save/commit)
-- Escalation path: QA Guardian escalates deep architectural failures to Architecture Guardian; Architecture Guardian escalates zero-dependency violations directly to the user
-
-**Triggers**:
-- Automatic: Edits to high-risk files (.backend/server.py, proxy_translators.py, metadata_db.py, vault_crawler.py, subprocess logic)
-- Manual: `/analyze_architecture` command
-- Phase-based: Before major refactors or new engine integrations
-
-**Output Format**:
-- Lightweight Architecture Decision Records (ADRs) saved to `.agents/architectural_decisions/`
-- Uses GitHub-style markdown alerts (> [!WARNING], > [!IMPORTANT])
-- Chat summary with Risk Level, Coupling Warnings, and Verdict (Proceed / Refactor / Blocked)
-
-**How to Invoke**:
-- `/analyze_architecture` — Analyze current or proposed changes
-- Mention "Architecture Guardian" or "Monolith Sentinel" in any prompt for targeted review
-
----
-
-### Runtime Health Doctor (Infra Doctor)
-
-**Purpose**:  
-Proactive, read-only monitor for live runtime infrastructure health. Detects zombie subprocesses, broken NTFS junctions, SQLite lock/contention issues, and manifest integrity problems without performing any mutations.
-
-**Key Responsibilities**:
-- Pre-flight checks before generation or server operations (manifest.json, Global_Vault junctions, metadata.sqlite accessibility)
-- Safe surveillance for lingering engine processes (ComfyUI/Forge sandboxes)
-- Detection of potential pipe deadlocks or vault_crawler contention
-- Clear health reporting with risk levels (Green/Yellow/Red) and non-destructive recommendations
-
-**Integration**:
-- Escalates structural or recurring issues to Architecture Guardian for ADRs and long-term fixes
-- Provides runtime context to QA Guardian when tests fail due to infrastructure problems
-- Triggers: Automatic before generations / on startup; Manual via `/run_health_check` or "Doctor, check system health."
-
-**Output**: Concise markdown reports using > [!NOTE], > [!WARNING], > [!CRITICAL] alerts.
-
-**How to Invoke**: `/run_health_check`
-
----
-
-### API Contract Librarian
-
-**Purpose**:  
-Lightweight skill responsible for preventing JSON payload drift between the Vanilla JS frontend (`static/index.html`) and the Python backend (`.backend/server.py` + `proxy_translators.py`). Maintains a living reference document of API endpoint contracts.
-
-**Key Responsibilities**:
-- Maps major API endpoints, request shapes, and response structures
-- Detects and warns about potential payload mismatches or special-case handling (e.g., multipart FormData bypasses)
-- Updates the living contract file at `.agents/contracts/api_contracts.md`
-- Supports the Architecture Guardian during code reviews of boundary files
-
-**Integration**:
-- Automatically triggered by Architecture Guardian when changes occur in server.py, proxy_translators.py, or index.html fetch() logic
-- Manual trigger: `/update_api_contracts`
-
-**Output**:
-- Markdown report with endpoint tables and drift analysis
-- Uses > [!NOTE] and > [!WARNING] alerts
-- Writes to `.agents/contracts/api_contracts.md`
-
-**Current Status** (as of latest sync):
-- Core inference proxies and infrastructure endpoints documented
-- Special warning noted on `/api/comfy_upload` multipart handling
-
-**How to Invoke**: `/update_api_contracts`
+| Rule | Purpose |
+|------|---------|
+| [security.md](file:///g:/AG%20SM/.agents/rules/security.md) | Path traversal, subprocess injection, API keys, SQL injection |
+| [cross_platform.md](file:///g:/AG%20SM/.agents/rules/cross_platform.md) | Windows/macOS/Linux parity patterns |
+| [data_safety.md](file:///g:/AG%20SM/.agents/rules/data_safety.md) | Sacred files, DB safety, OTA protection |
+| [qa_guardian.md](file:///g:/AG%20SM/.agents/rules/qa_guardian.md) | Test isolation, flakiness, Playwright stability |
+| [model_switch_confirmation.md](file:///g:/AG%20SM/.agents/rules/model_switch_confirmation.md) | Pause-and-confirm workflow for model switches |
+| [learning_and_memory.md](file:///g:/AG%20SM/.agents/rules/learning_and_memory.md) | Prevents autonomous rule modification |
 
 ---
 
@@ -386,185 +154,74 @@ Lightweight skill responsible for preventing JSON payload drift between the Vani
 
 | Component | Technology | Rationale |
 |-----------|-----------|-----------|
-| **Backend Server** | Python 3.11+ stdlib `http.server.ThreadingHTTPServer` | Zero dependencies. Portable. Ships with python-build-standalone. |
-| **Database** | SQLite3 (stdlib) | Single-file, zero-config, survives crashes, portable across OS. |
-| **Frontend** | Monolithic HTML/CSS/JS (`index.html`) | No build step. Instant reload. Ships as single file. |
-| **Hashing** | `hashlib.sha256` (stdlib) | CivitAI API uses SHA-256 for model identification. |
-| **HTTP Client** | `urllib.request` (stdlib) | Zero-dependency HTTP for API calls. |
-| **Semantic Search** | `sentence-transformers` (all-MiniLM-L6-v2) | ~80MB model, runs on CPU, produces 384-dim embeddings. |
-| **Process Management** | `subprocess.Popen` with PID tracking | Full lifecycle control of engine processes. |
-| **Symlinks** | `mklink /J` (Windows) / `os.symlink` (UNIX) | Zero-byte directory links. No admin required on Windows. |
-| **Portable Python** | `python-build-standalone` by indygreg | Self-contained CPython builds for all platforms. |
+| **Backend** | Python 3.11+ stdlib `http.server.ThreadingHTTPServer` | Zero dependencies, portable |
+| **Database** | SQLite3 (stdlib) | Single-file, zero-config, crash-safe |
+| **Frontend** | Monolithic HTML/CSS/JS (`index.html`) | No build step, instant reload |
+| **Hashing** | `hashlib.sha256` (stdlib) | CivitAI SHA-256 identification |
+| **HTTP Client** | `urllib.request` (stdlib) | Zero-dependency REST calls |
+| **Semantic Search** | `sentence-transformers` (all-MiniLM-L6-v2) | ~80MB, CPU-only, 384-dim |
+| **Process Mgmt** | `subprocess.Popen` + PID tracking | Full lifecycle control |
+| **Symlinks** | `mklink /J` (Win) / `os.symlink` (UNIX) | Zero-byte, no admin |
+| **Portable Python** | `python-build-standalone` | Self-contained CPython |
 
 ### Folder Structure
 
 ```
 AG SM/                              ← Project Root
-├── agents.md                       ← THIS FILE — master agent instructions
-├── README.md                       ← User-facing documentation
-├── .gitignore                      ← Ignores runtime artifacts
-├── .gitmodules                     ← Git submodule declarations
+├── agents.md                       ← THIS FILE — agent routing document
+├── .agents/                        ← Agent ecosystem
+│   ├── skills/                     ← One SKILL.md per capability (16 skills)
+│   ├── rules/                      ← Policy documents (6 rules)
+│   ├── workflows/                  ← Reusable multi-step procedures
+│   ├── contracts/                  ← API payload contracts
+│   ├── architectural_decisions/    ← ADRs
+│   └── visualizations/             ← Mermaid diagrams
 │
-├── install.bat / install.sh        ← Platform bootstrap scripts
-├── start_manager.bat / .sh         ← Platform startup scripts
-├── build.py                        ← Release packaging script
-│
-├── .agents/                        ← Agent skill definitions
-│   └── skills/                     ← One SKILL.md per capability
-│       ├── universal_inference_router/
-│       ├── app_store_installer/
-│       ├── global_vault_symlinker/
-│       ├── asset_crawler_metadata_scraper/
-│       ├── canvas_gallery_restore/
-│       ├── ota_ghost_updater/
-│       └── intelligent_model_router/   ← NEW — AI model tier routing
-│
-├── .agent/                         ← Global rules and policies
-│   ├── rules/
-│   │   ├── security.md
-│   │   ├── cross_platform.md
-│   │   ├── data_safety.md
-│   │   └── model_switch_confirmation.md  ← NEW — pause-and-confirm rule
-│   └── workflows/
-│       └── New_Phase_Start_With_Model_Router.md  ← NEW — phase-start workflow
-│
-├── Workflows/                      ← Reusable development workflows
-│   └── new_feature.md
-│
-├── .backend/                       ← Python backend (served at runtime)
-│   ├── server.py                   ← HTTP server + API router (~1700 lines, 44 endpoints)
-│   ├── metadata_db.py              ← SQLite ORM layer (~485 lines, models/generations/embeddings/tags)
-│   ├── vault_crawler.py            ← Background file indexer with ThreadPoolExecutor
-│   ├── civitai_client.py           ← CivitAI API v1 hash-based metadata scraper
-│   ├── hf_client.py                ← HuggingFace Hub search client
-│   ├── download_engine.py          ← Chunked file downloader with JSON progress tracking
-│   ├── import_engine.py            ← Drag-drop model import pipeline with dependency resolution
-│   ├── embedding_engine.py         ← Semantic search via sentence-transformers
-│   ├── installer_engine.py         ← Config-driven app installer (git clone + venv + pip + symlinks)
-│   ├── symlink_manager.py          ← Cross-platform directory junction/symlink creation
-│   ├── updater.py                  ← OTA ghost upgrade daemon (git pull / zip extraction)
-│   ├── update_checker.py           ← CivitAI model version comparator
-│   ├── bootstrap.py                ← First-run directory structure initialization
-│   │
-│   ├── static/
-│   │   └── index.html              ← Monolithic frontend (~260KB, all UI tabs + Sprint 9 widgets)
-│   │
-│   ├── recipes/                    ← App Store installation templates
-│   │   ├── comfyui.json
-│   │   ├── forge.json
-│   │   ├── auto1111.json
-│   │   └── fooocus.json
-│   │
-│   ├── cache/                      ← Runtime cache (gitignored)
-│   │   ├── downloads.json          ← Active download progress tracking
-│   │   └── thumbnails/             ← CivitAI preview images
-│   │
-│   ├── metadata.sqlite             ← Canonical database (gitignored)
-│   └── settings.json               ← User preferences (gitignored)
+├── .backend/                       ← Python backend
+│   ├── server.py                   ← HTTP server + API router (~2300 lines, 70 endpoints)
+│   ├── proxy_translators.py        ← ComfyUI/SDAPI payload translation
+│   ├── metadata_db.py              ← SQLite ORM layer
+│   ├── vault_crawler.py            ← Background file indexer
+│   ├── civitai_client.py           ← CivitAI API metadata scraper
+│   ├── hf_client.py                ← HuggingFace Hub search
+│   ├── installer_engine.py         ← App installer (clone + venv + pip + symlinks)
+│   ├── symlink_manager.py          ← Cross-platform junction/symlink creation
+│   ├── embedding_engine.py         ← Semantic search vectors
+│   ├── updater.py                  ← OTA ghost upgrade daemon
+│   ├── static/index.html           ← Monolithic frontend
+│   └── recipes/*.json              ← App Store templates
 │
 ├── Global_Vault/                   ← Universal model storage (gitignored)
-│   ├── checkpoints/
-│   ├── loras/
-│   ├── vaes/
-│   ├── controlnet/
-│   ├── unet/
-│   ├── clip/
-│   ├── text_encoders/
-│   ├── embeddings/
-│   └── misc/
-│
 ├── packages/                       ← Installed applications (gitignored)
-│   └── comfyui/
-│       ├── app/                    ← Git clone of the application
-│       ├── env/                    ← Isolated .venv
-│       ├── manifest.json           ← Installation metadata
-│       └── runtime.log             ← Live stdout/stderr capture
-│
-├── bin/                            ← Portable binaries (gitignored)
-│   └── python/                     ← python-build-standalone
-│
-└── dist/                           ← Release builds (gitignored)
-    └── AIManager_Release.zip
+├── bin/python/                     ← Portable Python (gitignored)
+└── .tests/                         ← QA test suite
 ```
 
 ### Coding Standards
 
 #### Python (.backend/)
-
-```python
-# ✅ REQUIRED: Type hints on all public functions
-def create_safe_directory_link(source_dir: str, target_link: str) -> bool:
-
-# ✅ REQUIRED: Docstrings on classes and non-trivial functions
-class VaultCrawler:
-    """Background worker designed to index massive files optimally
-    and stash references in SQLite."""
-
-# ✅ REQUIRED: Logging over print() — use module-level logger
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-
-# ✅ REQUIRED: Exception handling with context
-except subprocess.CalledProcessError as e:
-    logging.error(f"Install command failed during setup: {e}")
-
-# ✅ REQUIRED: Cross-platform branching
-if os.name == 'nt':
-    kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x200)
-
-# ❌ FORBIDDEN: Bare except clauses without logging
-except:
-    pass  # NEVER DO THIS
-
-# ❌ FORBIDDEN: Hard-coded absolute paths
-path = "C:\\Users\\user\\models"  # NEVER DO THIS
-
-# ❌ FORBIDDEN: os.remove() on user model files without explicit confirmation
-os.remove(vault_file)  # MUST be behind /api/delete_model with user intent
-```
+- Type hints on all public functions
+- Docstrings on classes and non-trivial functions
+- `logging` over `print()` — module-level logger
+- Exception handling with context — never bare `except: pass`
+- Cross-platform branching via `os.name` / `platform.system()`
+- No hard-coded absolute paths
 
 #### JavaScript (static/index.html)
+- Unique IDs on all interactive elements
+- Error handling on all `fetch()` calls
+- Template literals for dynamic HTML
+- Explicit route mapping — never blindly interpolate `${engine}_proxy`
 
-```javascript
-// ✅ REQUIRED: Unique IDs on all interactive elements
-<button id="btn-install-comfyui">
+#### Security (Quick Reference)
+> Full details in `.agents/rules/security.md`
 
-// ✅ REQUIRED: Error handling on all fetch() calls
-fetch('/api/models').then(r => r.json()).catch(err => showToast('Error: ' + err));
-
-// ✅ REQUIRED: Template literals for dynamic HTML (no string concatenation)
-const card = `<div class="model-card" data-hash="${model.file_hash}">`;
-
-// ✅ REQUIRED: Explicit Route Mapping
-// UI values (e.g., 'comfyui') MUST be explicitly mapped to expected backend endpoints (e.g., '/api/comfy_proxy'). Do NOT blindly interpolate `${engine}_proxy` without checking.
-
-// ❌ FORBIDDEN: Global event object access (use event parameter)
-function switchTab(event, tabId) {  // CORRECT
-function switchTab(tabId) { const e = event; }  // WRONG
-```
-
-#### Security Rules
-
-| Rule | Implementation |
-|------|---------------|
-| **Path traversal prevention** | `if ".." in path: send_error(403)` on all static file serving |
-| **API Fallback Routing** | Never use `send_error(404)` on `/api/` endpoints as it returns `<!DOCTYPE HTML>`. Always use `send_json_response({"error": ...}, 404)` to prevent JS `json()` parse errors. |
-| **Symlink target validation** | `os.path.abspath()` both source and target before creating links |
-| **Subprocess injection prevention** | Always use list-form `subprocess.run([...])`, never `shell=True` with user input |
-| **API key protection** | Keys stored in `settings.json` (gitignored), never logged, never in error responses |
-| **SQLite injection prevention** | Always use parameterized queries `cursor.execute('...?...', (param,))` |
-| **HTTP Redirect Authentication** | Always strip `Authorization` headers when processing HTTP redirects (e.g., using `HTTPRedirectHandler`) to prevent AWS S3/Cloudfront `400 Bad Request` exceptions on CDNs. |
-
-### Preferred Libraries
-
-| Library | Purpose | Why This One |
-|---------|---------|-------------|
-| `http.server` (stdlib) | Web server | Zero deps, ships with Python, threading support |
-| `sqlite3` (stdlib) | Database | Single-file, crash-safe, no separate process |
-| `hashlib` (stdlib) | Hashing | CivitAI requires SHA-256, stdlib is fastest pure-Python option |
-| `urllib.request` (stdlib) | HTTP client | Zero deps, sufficient for REST APIs |
-| `subprocess` (stdlib) | Process management | Full PID lifecycle control |
-| `threading` (stdlib) | Concurrency | Lightweight for I/O-bound tasks (hashing, API calls) |
-| `concurrent.futures` (stdlib) | Thread pools | Clean API for parallel file hashing |
-| `sentence-transformers` | Semantic search | Small model (80MB), CPU-only, high-quality embeddings |
-| `zipfile` (stdlib) | Release packaging | Native Python zip creation |
-| `shutil` (stdlib) | File operations | Safe copy/delete with metadata preservation |
+| Rule | Pattern |
+|------|---------|
+| Path traversal | `if ".." in path: send_error(403)` |
+| API error format | Always `send_json_response({"error": ...})`, never raw `send_error(404)` on `/api/` |
+| Symlink validation | `os.path.abspath()` both source and target |
+| Subprocess safety | List-form `subprocess.run([...])`, never `shell=True` with user input |
+| DB queries | Parameterized `cursor.execute('...?', (param,))` always |
+| API keys | Never in logs, error responses, or Git |
+| HTTP redirects | Strip `Authorization` headers on redirect |

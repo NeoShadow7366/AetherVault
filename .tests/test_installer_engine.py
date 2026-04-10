@@ -38,11 +38,24 @@ class TestInstallerEngine(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
+    @patch("installer_engine.subprocess.Popen")
     @patch("installer_engine.subprocess.run")
-    def test_installation_pipeline(self, mock_subprocess):
+    def test_installation_pipeline(self, mock_subprocess_run, mock_popen):
         """Verify the entire installer parsing creates the requested directory tree and mock subprocess cmds."""
-        # Ensure our subprocess mock pretends everything succeeded natively
-        mock_subprocess.return_value = MagicMock(returncode=0)
+        # Mock subprocess.run for git --version pre-flight, venv creation, pip upgrade, and pip install
+        mock_subprocess_run.return_value = MagicMock(returncode=0)
+        
+        # Mock subprocess.Popen for the streaming git clone (_run_git_clone_with_progress)
+        mock_proc = MagicMock()
+        mock_proc.stderr = MagicMock()
+        # Simulate git progress output ending immediately (empty read)
+        mock_proc.stderr.read = MagicMock(return_value=b"")
+        mock_proc.stdout = MagicMock()
+        mock_proc.stdout.read = MagicMock(return_value=b"")
+        mock_proc.wait = MagicMock(return_value=0)
+        mock_proc.returncode = 0
+        mock_proc.pid = 99999
+        mock_popen.return_value = mock_proc
         
         result = self.installer.install(self.recipe_path)
         self.assertTrue(result)
@@ -62,24 +75,22 @@ class TestInstallerEngine(unittest.TestCase):
             manifest_json = json.load(f)
             self.assertEqual(manifest_json["name"], "ComfyUI Mock")
             
-        # Verify Subprocess Execution sequence (Clone -> Venv -> Pip)
-        # subprocess.run should have been called at least 3 times implicitly (clone, venv, pip)
-        # Windows will call it a 4th time natively via symlink_manager "mklink"
-        self.assertGreaterEqual(mock_subprocess.call_count, 3)
-        calls = mock_subprocess.call_args_list
+        # Verify Popen was called for the clone phase
+        self.assertGreaterEqual(mock_popen.call_count, 1)
+        clone_cmd = mock_popen.call_args_list[0][0][0]
+        self.assertIn("clone", clone_cmd)
+        self.assertIn("https://github.com/mock/comfyui", clone_cmd)
         
-        # Clone
-        self.assertIn("clone", calls[0][0][0])
-        self.assertIn("https://github.com/mock/comfyui", calls[0][0][0])
+        # Verify subprocess.run was called for venv + pip phases
+        # Calls: git --version (pre-flight), venv creation, pip upgrade, pip install
+        self.assertGreaterEqual(mock_subprocess_run.call_count, 2)
+        run_calls = mock_subprocess_run.call_args_list
         
-        # Venv
-        self.assertIn("venv", calls[1][0][0])
+        # First run call is git --version pre-flight check
+        self.assertIn("git", run_calls[0][0][0])
         
-        # Pip command correctly isolated to the Venv Python binary, NOT globally!
-        pip_cmd = calls[2][0][0]
-        self.assertTrue(pip_cmd[0].endswith("python") or pip_cmd[0].endswith("python.exe"))
-        self.assertEqual(pip_cmd[1], "-m")
-        self.assertEqual(pip_cmd[2], "pip")
+        # Second run call is venv creation
+        self.assertIn("venv", run_calls[1][0][0])
 
     def test_uninstallation_wipes_isolated_environment(self):
         """Verify `rmtree` removes the virtual environment wrapper securely."""

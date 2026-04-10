@@ -1,6 +1,15 @@
 ---
 name: App Store Installer
 description: Config-driven application installer that reads JSON recipe files, clones repositories, creates isolated Python virtual environments, installs pip dependencies, creates Global Vault symlinks, and writes manifest.json for lifecycle tracking.
+keywords:
+  - install
+  - recipe
+  - venv
+  - pip
+  - clone
+  - package
+  - repair
+  - manifest
 ---
 
 # App Store Installer

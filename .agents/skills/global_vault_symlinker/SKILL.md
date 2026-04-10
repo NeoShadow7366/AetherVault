@@ -1,6 +1,13 @@
 ---
 name: Global Vault Symlinker
 description: Creates zero-byte cross-platform directory junctions (Windows NTFS) or symbolic links (UNIX) to share Global_Vault model files across multiple installed applications without duplicating bytes on disk.
+keywords:
+  - symlink
+  - junction
+  - mklink
+  - Global_Vault
+  - model sharing
+  - zero-byte
 ---
 
 # Global Vault Symlinker

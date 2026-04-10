@@ -2,6 +2,8 @@
   "app_id": "fooocus",
   "name": "Fooocus",
   "repository": "https://github.com/lllyasviel/Fooocus.git",
+  "install_mode": "latest_release",
+  "description": "Simplified one-click image generation with GPT-style prompt expansion.",
   "install_commands": [
     "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121",
     "pip install -r requirements_versions.txt"
@@ -10,5 +12,6 @@
     "checkpoints": "models/checkpoints",
     "loras": "models/loras"
   },
+  "port": 8888,
   "launch_command": "entry_with_update.py"
 }

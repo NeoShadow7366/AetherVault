@@ -1,6 +1,12 @@
 ---
 name: Doc Guardian
 description: The official agent authorized to create, update, and manage documentation files in docs/ using safe timestamped backups.
+keywords:
+  - docs
+  - documentation
+  - backup
+  - versioning
+  - doc history
 ---
 
 # Doc Guardian Skill

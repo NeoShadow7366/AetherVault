@@ -18,12 +18,9 @@ class TestMetadataDB(unittest.TestCase):
         self.db = MetadataDB(self.db_path)
 
     def tearDown(self):
-        if os.path.exists(self.db_path):
-            try:
-                os.remove(self.db_path)
-            except Exception:
-                pass
-        os.rmdir(self.temp_dir)
+        self.db.close()
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_initialization(self):
         """Ensure tables are created upon initialization."""

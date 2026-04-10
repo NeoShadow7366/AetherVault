@@ -1,6 +1,12 @@
 ---
 name: Codebase Documenter
 description: Generates full systematic Markdown documentation based on analysis (read-only).
+keywords:
+  - documentation
+  - markdown
+  - docs
+  - feature docs
+  - architecture docs
 ---
 
 # Codebase Documenter Skill

@@ -816,6 +816,207 @@
         .disk-warning-text .title { font-weight: 700; color: #fbbf24; font-size: 0.9rem; }
         .disk-warning-text .detail { color: #d4a43a; font-size: 0.82rem; margin-top: 2px; }
 
+        /* ═══ Sprint 12 — Inpainting Canvas ═══ */
+        .inpaint-toolbar {
+            display: none; position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            z-index: 20; background: rgba(15,23,42,0.92); backdrop-filter: blur(12px);
+            border: 1px solid rgba(99,102,241,0.3); border-radius: 12px;
+            padding: 8px 14px; gap: 10px; align-items: center;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            animation: cmdSlideIn 0.2s ease-out;
+        }
+        .inpaint-toolbar.active { display: flex; }
+        .inpaint-toolbar button {
+            background: var(--surface-hover); border: 1px solid var(--border);
+            color: #e2e8f0; padding: 6px 12px; border-radius: 8px;
+            cursor: pointer; font-size: 0.82rem; font-weight: 600;
+            transition: all 0.15s; display: flex; align-items: center; gap: 5px;
+        }
+        .inpaint-toolbar button:hover { border-color: var(--primary); background: rgba(99,102,241,0.15); }
+        .inpaint-toolbar button.active-tool { background: var(--primary); border-color: var(--primary); color: #fff; }
+        .inpaint-toolbar .brush-size-ctrl {
+            display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 0.8rem;
+        }
+        .inpaint-toolbar .brush-size-ctrl input[type="range"] {
+            width: 80px; accent-color: var(--primary); cursor: pointer;
+        }
+        .inpaint-toolbar .separator {
+            width: 1px; height: 24px; background: var(--border); flex-shrink: 0;
+        }
+        #inpaint-canvas {
+            position: absolute; top: 0; left: 0;
+            z-index: 15; cursor: crosshair; display: none;
+            pointer-events: none;
+        }
+        #inpaint-canvas.active { display: block; pointer-events: auto; }
+
+        /* ═══ Sprint 12 — Outpainting Direction Buttons ═══ */
+        .outpaint-controls {
+            display: none; position: absolute; z-index: 18;
+            pointer-events: none;
+        }
+        .outpaint-controls.active { display: block; }
+        .outpaint-btn {
+            position: absolute; pointer-events: auto;
+            background: rgba(15,23,42,0.85); backdrop-filter: blur(6px);
+            border: 1px solid rgba(99,102,241,0.35); color: #a5b4fc;
+            width: 36px; height: 36px; border-radius: 50%;
+            cursor: pointer; font-size: 1rem; display: flex;
+            align-items: center; justify-content: center;
+            transition: all 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        }
+        .outpaint-btn:hover { background: var(--primary); color: #fff; border-color: var(--primary); transform: scale(1.15); }
+        .outpaint-btn.up    { top: 4px;  left: 50%; transform: translateX(-50%); }
+        .outpaint-btn.down  { bottom: 4px; left: 50%; transform: translateX(-50%); }
+        .outpaint-btn.left  { left: 4px; top: 50%; transform: translateY(-50%); }
+        .outpaint-btn.right { right: 4px; top: 50%; transform: translateY(-50%); }
+        .outpaint-btn.up:hover    { transform: translateX(-50%) scale(1.15); }
+        .outpaint-btn.down:hover  { transform: translateX(-50%) scale(1.15); }
+        .outpaint-btn.left:hover  { transform: translateY(-50%) scale(1.15); }
+        .outpaint-btn.right:hover { transform: translateY(-50%) scale(1.15); }
+
+        /* ═══ Sprint 12 — Generation Progress Bar ═══ */
+        .gen-progress-bar {
+            display: none; height: 6px; background: #1e293b;
+            border-radius: 0; overflow: hidden; flex-shrink: 0;
+        }
+        .gen-progress-bar.active { display: block; }
+        .gen-progress-fill {
+            height: 100%; width: 0%;
+            background: linear-gradient(90deg, var(--primary), #a855f7);
+            transition: width 0.3s ease;
+        }
+        .gen-progress-info {
+            display: none; padding: 4px 12px; background: var(--surface);
+            font-size: 0.78rem; color: var(--text-muted);
+            flex-shrink: 0; text-align: center;
+        }
+        .gen-progress-info.active { display: block; }
+
+        /* ═══ Sprint 12 — Regional Prompting ═══ */
+        .region-editor {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 16; display: none; pointer-events: none;
+        }
+        .region-editor.active { display: block; pointer-events: auto; cursor: crosshair; }
+        .region-zone {
+            position: absolute; border: 2px solid;
+            background: rgba(255,255,255,0.08);
+            display: flex; flex-direction: column;
+            cursor: move; min-width: 40px; min-height: 40px;
+        }
+        .region-zone .zone-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 2px 6px; font-size: 0.7rem; font-weight: 700;
+            color: #fff; background: rgba(0,0,0,0.6);
+            cursor: move; user-select: none;
+        }
+        .region-zone .zone-header .zone-close {
+            cursor: pointer; font-size: 0.85rem; opacity: 0.7;
+            transition: opacity 0.15s;
+        }
+        .region-zone .zone-header .zone-close:hover { opacity: 1; }
+        .region-zone textarea {
+            flex: 1; background: rgba(0,0,0,0.5); border: none;
+            color: #e2e8f0; font-size: 0.75rem; font-family: inherit;
+            padding: 4px 6px; resize: none; outline: none;
+            min-height: 28px;
+        }
+        .region-zone .zone-resize {
+            position: absolute; bottom: -4px; right: -4px;
+            width: 12px; height: 12px; cursor: se-resize;
+            background: rgba(255,255,255,0.3); border-radius: 2px;
+        }
+        .region-toolbar {
+            display: none; position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+            z-index: 22; background: rgba(15,23,42,0.92); backdrop-filter: blur(12px);
+            border: 1px solid rgba(99,102,241,0.3); border-radius: 12px;
+            padding: 8px 14px; gap: 10px; align-items: center;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+        .region-toolbar.active { display: flex; }
+        .region-toolbar button {
+            background: var(--surface-hover); border: 1px solid var(--border);
+            color: #e2e8f0; padding: 6px 12px; border-radius: 8px;
+            cursor: pointer; font-size: 0.82rem; font-weight: 600;
+            transition: all 0.15s; display: flex; align-items: center; gap: 5px;
+        }
+        .region-toolbar button:hover { border-color: var(--primary); background: rgba(99,102,241,0.15); }
+        .region-toolbar .separator {
+            width: 1px; height: 24px; background: var(--border); flex-shrink: 0;
+        }
+        .region-toolbar .zone-count {
+            color: var(--text-muted); font-size: 0.8rem; font-weight: 600;
+        }
+
+        /* ═══ Sprint 12 — X/Y/Z Plot Panel ═══ */
+        .xyz-panel {
+            position: fixed; top: 0; right: -520px; width: 500px; height: 100vh;
+            background: rgba(15,23,42,0.97); backdrop-filter: blur(14px);
+            border-left: 1px solid rgba(99,102,241,0.3);
+            z-index: 1500; transition: right 0.3s ease;
+            display: flex; flex-direction: column; padding: 0;
+            box-shadow: -8px 0 32px rgba(0,0,0,0.6);
+        }
+        .xyz-panel.active { right: 0; }
+        .xyz-panel .panel-header {
+            padding: 20px 24px; border-bottom: 1px solid var(--border);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .xyz-panel .panel-header h3 { margin: 0; font-size: 1.15rem; color: #f1f5f9; }
+        .xyz-panel .panel-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
+        .xyz-axis-config {
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 10px; padding: 14px; margin-bottom: 14px;
+        }
+        .xyz-axis-config label { font-size: 0.82rem; font-weight: 700; color: #94a3b8; margin-bottom: 6px; display: block; }
+        .xyz-axis-config select, .xyz-axis-config input {
+            width: 100%; background: var(--surface-hover); border: 1px solid var(--border);
+            color: #e2e8f0; padding: 8px 10px; border-radius: 6px; font-size: 0.85rem;
+            margin-top: 4px;
+        }
+        .xyz-axis-config .values-hint { font-size: 0.72rem; color: var(--text-muted); margin-top: 4px; }
+        .xyz-grid-container {
+            margin-top: 16px; display: grid; gap: 4px; max-height: 400px; overflow: auto;
+            border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+            background: #000;
+        }
+        .xyz-grid-container img {
+            width: 100%; border-radius: 4px; cursor: pointer;
+            transition: transform 0.15s;
+        }
+        .xyz-grid-container img:hover { transform: scale(1.05); }
+        .xyz-grid-label {
+            color: var(--text-muted); font-size: 0.7rem; text-align: center;
+            padding: 2px; background: rgba(0,0,0,0.6); border-radius: 3px;
+        }
+
+        /* ═══ Sprint 12 — Wildcard Syntax ═══ */
+        .wildcard-hint {
+            background: rgba(99,102,241,0.08); border: 1px solid rgba(99,102,241,0.2);
+            border-radius: 8px; padding: 10px 14px; margin-top: 8px; font-size: 0.78rem;
+            color: var(--text-muted); line-height: 1.5;
+        }
+        .wildcard-hint code { color: #a78bfa; background: rgba(139,92,246,0.15); padding: 1px 5px; border-radius: 4px; }
+
+        /* ═══ Sprint 12 — Seed Explorer ═══ */
+        .seed-explorer-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+            margin-top: 12px; max-height: 350px; overflow-y: auto;
+        }
+        .seed-explorer-grid .seed-cell {
+            position: relative; border-radius: 6px; overflow: hidden;
+            border: 2px solid transparent; cursor: pointer;
+            transition: border-color 0.15s;
+        }
+        .seed-explorer-grid .seed-cell:hover { border-color: var(--primary); }
+        .seed-explorer-grid .seed-cell img { width: 100%; display: block; }
+        .seed-explorer-grid .seed-cell .seed-label {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            background: rgba(0,0,0,0.7); color: #e2e8f0;
+            font-size: 0.68rem; padding: 3px 6px; text-align: center;
+        }
+
     </style>
 </head>
 <body>
@@ -1631,7 +1832,11 @@
                 <label class="section-title">Prompt</label>
                 <textarea id="inf-prompt" style="flex: 1; outline: none; background: var(--bg-color); border: 1px solid var(--border); color: #fff; padding: 15px; border-radius: 8px; resize: vertical; min-height: 100px; font-size: 1rem; font-family: inherit; margin-bottom: 4px;" placeholder="masterpiece, best quality, highly detailed..." oninput="updateTokenCounter()"></textarea>
                 <div class="token-counter green" id="inf-token-counter"><span class="count" id="inf-token-count">0</span><span style="color:var(--text-muted)"> / <span id="inf-token-limit">77</span> tokens</span></div>
-                
+                <!-- Sprint 12: Ollama Prompt Enhancement -->
+                <div style="display:flex; gap:6px; align-items:center; margin: 6px 0;">
+                    <button id="ollama-enhance-btn" onclick="enhancePromptWithOllama()" style="flex:1; background:linear-gradient(135deg,#6366f1,#a855f7); color:#fff; border:none; padding:8px 14px; border-radius:8px; font-size:0.82rem; font-weight:600; cursor:pointer; transition:all 0.15s; display:flex; align-items:center; justify-content:center; gap:6px;" onmouseenter="this.style.transform='scale(1.02)'" onmouseleave="this.style.transform='scale(1)'">✨ Enhance with AI</button>
+                    <span id="ollama-status-dot" style="width:10px; height:10px; border-radius:50%; background:#ef4444; flex-shrink:0;" title="Ollama: Offline"></span>
+                </div>
                 <div id="inf-sd-neg-row" style="display: flex; flex-direction: column;"><label class="section-title">Negative Prompt</label>
                 <textarea id="inf-negative" style="flex: 1; outline: none; background: var(--bg-color); border: 1px solid var(--border); color: #fff; padding: 15px; border-radius: 8px; resize: vertical; min-height: 100px; font-size: 1rem; font-family: inherit; width: 100%; box-sizing: border-box;" placeholder="worst quality, low quality, blurry..."></textarea></div>
                 
@@ -1671,18 +1876,55 @@
                         <div id="inf-progress-fill" style="position: absolute; top: 0; left: 0; height: 100%; width: 0%; background: rgba(59, 130, 246, 0.4); transition: width 0.1s linear; pointer-events: none;"></div>
                         <span id="inf-generate-text" style="position: relative; z-index: 2;">Generate Image</span>
                     </button>
+                    <button id="inf-inpaint-toggle" onclick="toggleInpaintMode()" style="height:50px; width:50px; flex-shrink:0; background:var(--surface-hover); border:1px solid var(--border); border-radius:8px; color:#94a3b8; font-size:1.3rem; cursor:pointer; transition:all 0.15s;" title="Toggle Inpaint Mode">🖌️</button>
+                    <button id="inf-region-toggle" onclick="toggleRegionMode()" style="height:50px; width:50px; flex-shrink:0; background:var(--surface-hover); border:1px solid var(--border); border-radius:8px; color:#94a3b8; font-size:1.1rem; cursor:pointer; transition:all 0.15s;" title="Regional Prompting">📐</button>
                     <button id="inf-batch-add-btn" onclick="addToBatchQueue()" style="height:50px; width: 50px; flex-shrink:0; background:linear-gradient(135deg,#6366f1,#8b5cf6); border:none; border-radius:8px; color:#fff; font-size:1.3rem; cursor:pointer; transition:transform 0.15s;" title="Add to Batch Queue" onmouseenter="this.style.transform='scale(1.1)'" onmouseleave="this.style.transform='scale(1)'">+⏳</button>
                 </div>
                 <div style="display:flex; justify-content:flex-end; margin-top:6px;">
                     <button id="inf-batch-toggle" onclick="toggleBatchPanel()" style="background:none; border:none; color:var(--text-muted); font-size:0.8rem; cursor:pointer; padding:2px 6px;">Queue (<span id="inf-batch-count">0</span>)</button>
                 </div>
             </div>
+            <!-- Sprint 12: Generation Progress Bar -->
+            <div class="gen-progress-bar" id="gen-progress-bar"><div class="gen-progress-fill" id="gen-progress-fill"></div></div>
+            <div class="gen-progress-info" id="gen-progress-info"></div>
             <!-- Canvas output -->
             <div style="flex: 1; display: flex; align-items: center; justify-content: center; background: #000; position: relative; overflow:hidden; cursor:crosshair;" id="inf-canvas-container"
                  ondragover="event.preventDefault();"
                  ondrop="event.preventDefault(); restoreFromGalleryDrop(event);">
                 <img id="inf-canvas-img" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none; transform-origin: center center; transition: transform 0.1s;" src="">
                 <div id="inf-canvas-empty" style="color: var(--text-muted); font-size: 1.1rem; font-weight: 500; pointer-events:none;">No Output</div>
+                <!-- Sprint 12: Inpainting Canvas Overlay -->
+                <canvas id="inpaint-canvas"></canvas>
+                <!-- Sprint 12: Inpainting Toolbar -->
+                <div class="inpaint-toolbar" id="inpaint-toolbar">
+                    <button id="inpaint-brush-btn" class="active-tool" onclick="setInpaintTool('brush')">🖌️ Brush</button>
+                    <button id="inpaint-eraser-btn" onclick="setInpaintTool('eraser')">🧹 Eraser</button>
+                    <div class="separator"></div>
+                    <div class="brush-size-ctrl">
+                        <span>Size</span>
+                        <input type="range" id="inpaint-brush-size" min="5" max="100" value="30" oninput="window._inpaintBrushSize=+this.value;">
+                        <span id="inpaint-brush-size-label">30</span>
+                    </div>
+                    <div class="separator"></div>
+                    <button onclick="invertInpaintMask()" title="Invert Mask">🔄 Invert</button>
+                    <button onclick="clearInpaintMask()" title="Clear Mask">🗑️ Clear</button>
+                </div>
+                <!-- Sprint 12: Outpainting Direction Buttons -->
+                <div class="outpaint-controls" id="outpaint-controls">
+                    <button class="outpaint-btn up" onclick="outpaint('up')" title="Extend Up">↑</button>
+                    <button class="outpaint-btn down" onclick="outpaint('down')" title="Extend Down">↓</button>
+                    <button class="outpaint-btn left" onclick="outpaint('left')" title="Extend Left">←</button>
+                    <button class="outpaint-btn right" onclick="outpaint('right')" title="Extend Right">→</button>
+                </div>
+                <!-- Sprint 12: Regional Prompting Zone Editor -->
+                <div class="region-editor" id="region-editor"></div>
+                <div class="region-toolbar" id="region-toolbar">
+                    <button onclick="addRegionZone()" title="Add Zone">➕ Add Zone</button>
+                    <div class="separator"></div>
+                    <span class="zone-count" id="region-zone-count">0 zones</span>
+                    <div class="separator"></div>
+                    <button onclick="clearAllRegions()" title="Clear All Zones">🗑️ Clear</button>
+                </div>
             </div>
             <!-- Gallery strip -->
             <div style="height: 130px; border-top: 1px solid var(--border); padding: 10px; display: flex; gap: 10px; overflow-x: auto; background: var(--surface-hover); flex-shrink:0;" id="inf-gallery">
@@ -2817,13 +3059,19 @@
             const sort = document.getElementById('ex-sort').value;
             if(sort === "Favorites") {
                 grid.innerHTML = '';
-                const favs = window.appFavorites || {};
-                const favItems = Object.values(favs);
-                if(favItems.length === 0) {
-                     grid.innerHTML = '<div class="empty-state">No Favorites saved yet! Click the star on a Model Card.</div>';
-                     return;
+                try {
+                    const favRes = await fetch('/api/favorites');
+                    const favData = await favRes.json();
+                    window.appFavorites = favData || {};
+                    const favItems = Object.values(window.appFavorites);
+                    if(favItems.length === 0) {
+                         grid.innerHTML = '<div class="empty-state">No Favorites saved yet! Click the star on a Model Card.</div>';
+                         return;
+                    }
+                    renderExplorerGrid(favItems);
+                } catch(e) {
+                    grid.innerHTML = '<div class="empty-state">Failed to load favorites.</div>';
                 }
-                renderExplorerGrid(favItems);
                 return;
             }
 
@@ -3008,16 +3256,23 @@
             if(!window.appFavorites) window.appFavorites = {};
             if(window.appFavorites[modelId]) {
                 delete window.appFavorites[modelId];
+                try {
+                    await fetch('/api/favorites/remove', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ model_id: modelId })
+                    });
+                } catch(e) { console.warn('Failed to remove favorite:', e); }
             } else {
                 window.appFavorites[modelId] = m;
+                try {
+                    await fetch('/api/favorites/add', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ model_id: modelId, data: m })
+                    });
+                } catch(e) { console.warn('Failed to add favorite:', e); }
             }
-            try {
-                await fetch('/api/settings', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ favorites: window.appFavorites })
-                });
-            } catch(e) { console.warn('Failed to persist favorites:', e); }
             loadExplorer();
         }
 
@@ -3602,12 +3857,19 @@
                     const statusDot = p.is_running ? `<div class="progress-pulsing" style="width:10px; height:10px; border-radius:50%; background:#10b981; display:inline-block; margin-left:8px;" title="Running"></div>` : '';
 
                     grid.innerHTML += `
-                        <div class="std-card">
+                        <div class="std-card" id="pkg-card-${p.id}">
                             <h3 class="card-title" style="display:flex; align-items:center;">${p.name}${statusDot}</h3>
+                            <div style="display:flex; gap:8px; align-items:center; margin-top:4px; flex-wrap:wrap;">
+                                ${p.installed_version ? `<span style="font-size:0.72rem; background:var(--primary); color:white; padding:2px 8px; border-radius:8px; font-weight:600;">${p.installed_version}</span>` : ''}
+                                ${p.disk_size_mb != null ? `<span style="font-size:0.7rem; color:var(--text-muted);">💾 ${p.disk_size_mb >= 1024 ? (p.disk_size_mb / 1024).toFixed(1) + ' GB' : p.disk_size_mb + ' MB'}</span>` : ''}
+                                ${p.installed_at ? `<span style="font-size:0.7rem; color:var(--text-muted);">· ${new Date(p.installed_at).toLocaleDateString()}</span>` : ''}
+                            </div>
+                            <div id="pkg-status-${p.id}" style="display:none; margin-top:8px; font-size:0.78rem; color: #a78bfa; font-weight:600;"></div>
                             <div style="margin-top: 15px; display:flex; gap:10px; flex-wrap:wrap;">
                                 ${runBtns}
                                 <button onclick="openLogTerminal('${p.id}', '${p.name}')" style="background: var(--surface-hover); color: white; border: 1px solid var(--border); padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">⌨️ Terminal</button>
                                 <button onclick="openExtensions('${p.id}', '${p.name}')" style="background: #8b5cf6; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">Plugins</button>
+                                <button onclick="repairPackage('${p.id}')" style="background: #f59e0b; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;" title="Repair corrupted installation">🔧 Repair</button>
                                 <button onclick="uninstallPackage('${p.id}')" style="background: #ef4444; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;" title="Uninstall">Uninstall</button>
                             </div>
                         </div>
@@ -3640,13 +3902,16 @@
                         ? `<button disabled style="background: var(--surface); color: var(--text-muted); border: 1px solid var(--border); padding: 8px 15px; border-radius: 6px; cursor: not-allowed; font-weight: 600;">✅ Installed</button>`
                         : `<button id="install-btn-${r.app_id}" onclick="installRecipe('${r.id}', '${r.app_id}')" style="background: #10b981; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">Install Sandbox</button>`;
 
+                    const repoShort = r.repository ? r.repository.replace('https://github.com/', '').replace('.git', '') : '';
+
                     grid.innerHTML += `
                         <div class="std-card" id="recipe-card-${r.app_id}">
                             <h3 class="card-title" style="display:flex; align-items:center; gap:10px;">
                                 ${r.name}
                                 ${isInstalled ? `<span style="font-size:0.7rem; background: #10b981; color:white; padding:2px 6px; border-radius:8px; font-weight: bold;">INSTALLED</span>` : ''}
                             </h3>
-                            <p class="subtitle" style="font-size: 0.85rem; margin-bottom: 15px;">Automated strict environment setup mapping to Global Vault.</p>
+                            ${repoShort ? `<p class="subtitle" style="font-size: 0.78rem; margin-bottom:4px; color:var(--text-muted);"><span style="opacity:0.6;">📦</span> ${repoShort}</p>` : ''}
+                            <p class="subtitle" style="font-size: 0.82rem; margin-bottom: 15px;">${r.description || 'Isolated sandbox with auto-linked Global Vault models.'}</p>
                             <div id="install-progress-${r.app_id}" style="display:none; margin-bottom:12px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                                     <span id="install-phase-${r.app_id}" style="font-size:0.8rem; color: #a78bfa; font-weight:600;">Starting...</span>
@@ -3655,7 +3920,7 @@
                                 <div style="width:100%; height:6px; background: var(--border); border-radius:3px; overflow:hidden;">
                                     <div id="install-bar-${r.app_id}" style="height:100%; width:0%; background: linear-gradient(90deg, #10b981, #34d399); border-radius:3px; transition: width 0.4s ease;"></div>
                                 </div>
-                                <div id="install-log-${r.app_id}" style="font-size:0.72rem; color: var(--text-muted); margin-top:4px; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                                <div id="install-log-${r.app_id}" style="font-size:0.7rem; color: var(--text-muted); margin-top:6px; font-family:monospace; background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:6px 8px; max-height:100px; overflow-y:auto; white-space:pre-wrap; line-height:1.4;"></div>
                             </div>
                             <div style="display:flex; gap:10px;">
                                 ${btnHtml}
@@ -3713,7 +3978,10 @@
                     if(phaseEl) phaseEl.innerText = job.phase || 'Working...';
                     if(pctEl) pctEl.innerText = `${job.percent || 0}%`;
                     if(barEl) barEl.style.width = `${job.percent || 0}%`;
-                    if(logEl && job.log?.length) logEl.innerText = job.log[job.log.length - 1];
+                    if(logEl && job.log?.length) {
+                        logEl.innerText = job.log.join('\n');
+                        logEl.scrollTop = logEl.scrollHeight;
+                    }
                     if(job.status === 'completed') {
                         clearInterval(_installPollIntervals[appId]);
                         delete _installPollIntervals[appId];
@@ -3735,8 +4003,8 @@
         }
         async function launchPackage(packageId) {
             const btn = event.currentTarget;
-            const originalText = btn.innerText;
             btn.innerText = "Launching...";
+            btn.disabled = true;
             try {
                 const res = await fetch('/api/launch', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -3744,13 +4012,109 @@
                 });
                 const response = await res.json();
                 if(response.status === 'success') {
+                    if(response.already_running && response.url) {
+                        window.open(response.url, '_blank');
+                        loadPackages();
+                        return;
+                    }
+                    // Show warm-up status on the card
+                    const statusEl = document.getElementById(`pkg-status-${packageId}`);
+                    if(statusEl) {
+                        statusEl.style.display = 'block';
+                        statusEl.innerHTML = '<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#a78bfa; margin-right:6px;"></span>Initializing engine...';
+                    }
+                    btn.innerText = "Starting...";
+                    // Connectivity poll: wait for the engine to actually respond
                     if(response.url) {
-                        setTimeout(() => window.open(response.url, '_blank'), 1500); // give it a sec to boot
+                        let attempts = 0;
+                        const maxAttempts = 60; // 60 × 2s = 2 minutes max
+                        const pollId = setInterval(async () => {
+                            attempts++;
+                            if(statusEl) statusEl.innerHTML = `<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#a78bfa; margin-right:6px;"></span>Warming up engine... (${attempts}s)`;
+                            try {
+                                const probe = await fetch(response.url, {mode: 'no-cors', signal: AbortSignal.timeout(2000)});
+                                // If we get here without error, the engine is listening
+                                clearInterval(pollId);
+                                if(statusEl) { statusEl.innerHTML = '✅ Engine ready!'; setTimeout(() => { statusEl.style.display = 'none'; }, 2000); }
+                                window.open(response.url, '_blank');
+                                loadPackages();
+                            } catch(_) {
+                                if(attempts >= maxAttempts) {
+                                    clearInterval(pollId);
+                                    if(statusEl) { statusEl.innerHTML = '⚠️ Engine may still be loading. <a href="' + response.url + '" target="_blank" style="color:#a78bfa;">Open manually →</a>'; }
+                                    loadPackages();
+                                }
+                            }
+                        }, 2000);
                     }
                     loadPackages();
-                } else alert(response.message);
-            } catch(e) { alert("Failed to contact server"); }
-            setTimeout(() => { if(btn) btn.innerText = originalText }, 2000);
+                } else {
+                    // Check if server says we need a repair
+                    if(response.needs_repair) {
+                        const statusEl = document.getElementById(`pkg-status-${packageId}`);
+                        if(statusEl) {
+                            statusEl.style.display = 'block';
+                            statusEl.innerHTML = '⚠️ Source code missing. <a href="#" onclick="repairPackage(\'' + packageId + '\'); return false;" style="color:#f59e0b; text-decoration:underline;">Click here to repair</a>';
+                        }
+                        btn.innerText = 'Launch UI'; btn.disabled = false;
+                    } else {
+                        alert(response.message); btn.innerText = 'Launch UI'; btn.disabled = false;
+                    }
+                }
+            } catch(e) { alert("Failed to contact server"); btn.innerText = 'Launch UI'; btn.disabled = false; }
+        }
+
+        async function repairPackage(packageId) {
+            if(!confirm(`Repair ${packageId}?\n\nThis will re-download the source code. Your venv and models are preserved.`)) return;
+            const statusEl = document.getElementById(`pkg-status-${packageId}`);
+            if(statusEl) {
+                statusEl.style.display = 'block';
+                statusEl.innerHTML = '<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#f59e0b; margin-right:6px;"></span>Starting repair...';
+            }
+            try {
+                const res = await fetch('/api/repair', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({package_id: packageId})
+                });
+                const response = await res.json();
+                if(response.status === 'success') {
+                    // Check if it was an instant git checkout repair (no background process)
+                    if(response.message && response.message.includes('restored from git')) {
+                        if(statusEl) statusEl.innerHTML = '✅ ' + response.message;
+                        setTimeout(loadPackages, 1500);
+                        return;
+                    }
+                    // Full re-install: poll install_jobs.json for progress
+                    if(statusEl) statusEl.innerHTML = '<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#f59e0b; margin-right:6px;"></span>Re-downloading source code...';
+                    const repairPoll = setInterval(async () => {
+                        try {
+                            const sr = await fetch('/api/install/status');
+                            const sd = await sr.json();
+                            const job = sd.jobs?.[packageId];
+                            if(!job) return;
+                            if(statusEl) {
+                                const pct = job.percent || 0;
+                                const phase = job.phase || 'Working...';
+                                const logLine = job.log?.length ? job.log[job.log.length - 1] : '';
+                                statusEl.innerHTML = `<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#f59e0b; margin-right:6px;"></span>${phase} (${pct}%)<br><span style="font-size:0.7rem; color:var(--text-muted); font-weight:normal;">${logLine}</span>`;
+                            }
+                            if(job.status === 'completed') {
+                                clearInterval(repairPoll);
+                                if(statusEl) { statusEl.innerHTML = '✅ Repair complete!'; }
+                                setTimeout(loadPackages, 2000);
+                            } else if(job.status === 'failed') {
+                                clearInterval(repairPoll);
+                                if(statusEl) { statusEl.innerHTML = '❌ Repair failed: ' + (job.phase || 'Unknown error'); }
+                            }
+                        } catch(_) {}
+                    }, 2000);
+                } else {
+                    if(statusEl) statusEl.innerHTML = '❌ ' + response.message;
+                }
+            } catch(e) {
+                alert('Failed to contact server');
+                if(statusEl) statusEl.style.display = 'none';
+            }
         }
 
         async function stopPackage(packageId) {
@@ -3774,38 +4138,63 @@
         
         async function restartPackage(packageId) {
             const btn = event.currentTarget;
-            const originalText = btn.innerText;
             btn.innerText = "Restarting...";
             btn.disabled = true;
+            const statusEl = document.getElementById(`pkg-status-${packageId}`);
+            if(statusEl) { statusEl.style.display = 'block'; statusEl.innerText = 'Stopping engine...'; }
             try {
-                await fetch('/api/stop', { method: 'POST', body: JSON.stringify({package_id: packageId}), headers: {'Content-Type': 'application/json'} });
-                await fetch('/api/launch', { method: 'POST', body: JSON.stringify({package_id: packageId}), headers: {'Content-Type': 'application/json'} });
-                setTimeout(loadPackages, 1500);
+                const res = await fetch('/api/restart', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({package_id: packageId})
+                });
+                const response = await res.json();
+                if(response.status === 'success') {
+                    if(statusEl) statusEl.innerText = '✅ Restarted successfully';
+                    setTimeout(() => { if(statusEl) statusEl.style.display = 'none'; loadPackages(); }, 2000);
+                } else {
+                    if(statusEl) statusEl.innerText = '⚠️ ' + (response.message || 'Restart failed');
+                    loadPackages();
+                }
             } catch(e) {
                 alert("Failed to restart!");
-                btn.innerText = originalText;
+                btn.innerText = 'Restart Engine';
                 btn.disabled = false;
+                if(statusEl) statusEl.style.display = 'none';
             }
         }
 
         async function uninstallPackage(packageId) {
             if(!confirm("Are you sure you want to permanently delete " + packageId + "?\n\nNote: Your Global Vault models are safe and will NOT be deleted.")) return;
             const btn = event.currentTarget;
-            const originalText = btn.innerText;
-            btn.innerText = "Uninstalling...";
+            btn.innerText = "Removing...";
             btn.disabled = true;
+            btn.style.opacity = '0.7';
+            // Show inline deletion status on card
+            const statusEl = document.getElementById(`pkg-status-${packageId}`);
+            if(statusEl) {
+                statusEl.style.display = 'block';
+                statusEl.innerHTML = '<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ef4444; margin-right:6px;"></span>Removing files...';
+            }
             try {
                 const res = await fetch('/api/uninstall', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({package_id: packageId})
                 });
                 const response = await res.json();
-                if(response.status === 'success') loadPackages();
-                else { alert(response.message); btn.innerText = "Error"; }
+                if(response.status === 'success') {
+                    if(statusEl) statusEl.innerHTML = '✅ Uninstalled!';
+                    setTimeout(loadPackages, 800);
+                } else {
+                    alert(response.message);
+                    btn.innerText = "Error";
+                    if(statusEl) statusEl.style.display = 'none';
+                }
             } catch(e) {
                 alert("Failed to contact server");
-                btn.innerText = originalText;
+                btn.innerText = 'Uninstall';
                 btn.disabled = false;
+                btn.style.opacity = '1';
+                if(statusEl) statusEl.style.display = 'none';
             }
         }
 
@@ -4063,6 +4452,641 @@
                     openExtensions(pkgId, document.getElementById('ext-pkg-name').innerText);
                 }
             } catch(e) { alert("Error removing extension"); }
+        }
+
+        /* ═══ Sprint 12 — Inpainting Canvas Engine ═══ */
+        window._inpaintActive = false;
+        window._inpaintTool = 'brush';
+        window._inpaintBrushSize = 30;
+        window._inpaintDrawing = false;
+        window._inpaintLastPos = null;
+
+        function toggleInpaintMode() {
+            const img = document.getElementById('inf-canvas-img');
+            if (img.style.display === 'none' || !img.src) {
+                alert('Generate or load an image first before inpainting.');
+                return;
+            }
+            window._inpaintActive = !window._inpaintActive;
+            const canvas = document.getElementById('inpaint-canvas');
+            const toolbar = document.getElementById('inpaint-toolbar');
+            const outpaint = document.getElementById('outpaint-controls');
+            const toggleBtn = document.getElementById('inf-inpaint-toggle');
+
+            if (window._inpaintActive) {
+                // Size canvas to match displayed image dimensions
+                resizeInpaintCanvas();
+                canvas.classList.add('active');
+                toolbar.classList.add('active');
+                outpaint.classList.add('active');
+                toggleBtn.style.background = 'var(--primary)';
+                toggleBtn.style.color = '#fff';
+                toggleBtn.style.borderColor = 'var(--primary)';
+            } else {
+                canvas.classList.remove('active');
+                toolbar.classList.remove('active');
+                outpaint.classList.remove('active');
+                toggleBtn.style.background = 'var(--surface-hover)';
+                toggleBtn.style.color = '#94a3b8';
+                toggleBtn.style.borderColor = 'var(--border)';
+            }
+        }
+
+        function resizeInpaintCanvas() {
+            const img = document.getElementById('inf-canvas-img');
+            const canvas = document.getElementById('inpaint-canvas');
+            const container = document.getElementById('inf-canvas-container');
+            // Match canvas to the rendered image bounds
+            const imgRect = img.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+            canvas.width = imgRect.width;
+            canvas.height = imgRect.height;
+            canvas.style.left = (imgRect.left - containerRect.left) + 'px';
+            canvas.style.top = (imgRect.top - containerRect.top) + 'px';
+            canvas.style.width = imgRect.width + 'px';
+            canvas.style.height = imgRect.height + 'px';
+        }
+
+        function setInpaintTool(tool) {
+            window._inpaintTool = tool;
+            document.getElementById('inpaint-brush-btn').classList.toggle('active-tool', tool === 'brush');
+            document.getElementById('inpaint-eraser-btn').classList.toggle('active-tool', tool === 'eraser');
+        }
+
+        function clearInpaintMask() {
+            const canvas = document.getElementById('inpaint-canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function invertInpaintMask() {
+            const canvas = document.getElementById('inpaint-canvas');
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            // Create a full white canvas, then make painted areas transparent
+            const inverted = ctx.createImageData(canvas.width, canvas.height);
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i + 3] > 0) {
+                    // Was painted (mask) → make transparent
+                    inverted.data[i] = 0;
+                    inverted.data[i + 1] = 0;
+                    inverted.data[i + 2] = 0;
+                    inverted.data[i + 3] = 0;
+                } else {
+                    // Was empty → fill with mask color
+                    inverted.data[i] = 255;
+                    inverted.data[i + 1] = 255;
+                    inverted.data[i + 2] = 255;
+                    inverted.data[i + 3] = 140;
+                }
+            }
+            ctx.putImageData(inverted, 0, 0);
+        }
+
+        function getInpaintMaskBase64() {
+            // Export the mask as a pure black/white PNG (white = inpaint region)
+            const srcCanvas = document.getElementById('inpaint-canvas');
+            const img = document.getElementById('inf-canvas-img');
+            // Create export canvas at original image resolution
+            const exportCanvas = document.createElement('canvas');
+            exportCanvas.width = img.naturalWidth;
+            exportCanvas.height = img.naturalHeight;
+            const ectx = exportCanvas.getContext('2d');
+            // Fill black (keep all)
+            ectx.fillStyle = '#000000';
+            ectx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+            // Scale mask drawing to original resolution
+            const scaleX = img.naturalWidth / srcCanvas.width;
+            const scaleY = img.naturalHeight / srcCanvas.height;
+            const srcCtx = srcCanvas.getContext('2d');
+            const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
+            const dstData = ectx.getImageData(0, 0, exportCanvas.width, exportCanvas.height);
+            for (let sy = 0; sy < srcCanvas.height; sy++) {
+                for (let sx = 0; sx < srcCanvas.width; sx++) {
+                    const si = (sy * srcCanvas.width + sx) * 4;
+                    if (srcData.data[si + 3] > 0) {
+                        // Map to destination
+                        const dx = Math.floor(sx * scaleX);
+                        const dy = Math.floor(sy * scaleY);
+                        // Fill a scaled block to avoid gaps
+                        const bw = Math.ceil(scaleX);
+                        const bh = Math.ceil(scaleY);
+                        for (let by = 0; by < bh && dy + by < exportCanvas.height; by++) {
+                            for (let bx = 0; bx < bw && dx + bx < exportCanvas.width; bx++) {
+                                const di = ((dy + by) * exportCanvas.width + (dx + bx)) * 4;
+                                dstData.data[di] = 255;
+                                dstData.data[di + 1] = 255;
+                                dstData.data[di + 2] = 255;
+                                dstData.data[di + 3] = 255;
+                            }
+                        }
+                    }
+                }
+            }
+            ectx.putImageData(dstData, 0, 0);
+            return exportCanvas.toDataURL('image/png').split(',')[1];
+        }
+
+        function hasInpaintMask() {
+            const canvas = document.getElementById('inpaint-canvas');
+            if (!canvas || !window._inpaintActive) return false;
+            const ctx = canvas.getContext('2d');
+            const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            for (let i = 3; i < data.length; i += 4) {
+                if (data[i] > 0) return true;
+            }
+            return false;
+        }
+
+        // Canvas drawing event handlers
+        (function setupInpaintEvents() {
+            document.addEventListener('DOMContentLoaded', () => {
+                const canvas = document.getElementById('inpaint-canvas');
+                if (!canvas) return;
+
+                canvas.addEventListener('mousedown', (e) => {
+                    if (!window._inpaintActive) return;
+                    window._inpaintDrawing = true;
+                    window._inpaintLastPos = getCanvasPos(e);
+                    drawInpaintDot(window._inpaintLastPos);
+                });
+
+                canvas.addEventListener('mousemove', (e) => {
+                    if (!window._inpaintDrawing) return;
+                    const pos = getCanvasPos(e);
+                    drawInpaintLine(window._inpaintLastPos, pos);
+                    window._inpaintLastPos = pos;
+                    // Update brush size label
+                    const label = document.getElementById('inpaint-brush-size-label');
+                    if (label) label.textContent = window._inpaintBrushSize;
+                });
+
+                document.addEventListener('mouseup', () => {
+                    window._inpaintDrawing = false;
+                    window._inpaintLastPos = null;
+                });
+
+                // Brush size slider live label
+                const sizeSlider = document.getElementById('inpaint-brush-size');
+                if (sizeSlider) {
+                    sizeSlider.addEventListener('input', () => {
+                        document.getElementById('inpaint-brush-size-label').textContent = sizeSlider.value;
+                    });
+                }
+            });
+        })();
+
+        function getCanvasPos(e) {
+            const canvas = document.getElementById('inpaint-canvas');
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top
+            };
+        }
+
+        function drawInpaintDot(pos) {
+            const canvas = document.getElementById('inpaint-canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.globalCompositeOperation = window._inpaintTool === 'eraser' ? 'destination-out' : 'source-over';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, window._inpaintBrushSize / 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawInpaintLine(from, to) {
+            const canvas = document.getElementById('inpaint-canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.globalCompositeOperation = window._inpaintTool === 'eraser' ? 'destination-out' : 'source-over';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+            ctx.lineWidth = window._inpaintBrushSize;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.beginPath();
+            ctx.moveTo(from.x, from.y);
+            ctx.lineTo(to.x, to.y);
+            ctx.stroke();
+        }
+
+        /* ═══ Sprint 12 — Outpainting ═══ */
+        function outpaint(direction) {
+            const img = document.getElementById('inf-canvas-img');
+            if (!img.src || img.style.display === 'none') return;
+
+            const extendSize = 128; // pixels to extend
+            const canvas = document.createElement('canvas');
+            const naturalW = img.naturalWidth;
+            const naturalH = img.naturalHeight;
+
+            let newW = naturalW, newH = naturalH, offsetX = 0, offsetY = 0;
+
+            if (direction === 'up')    { newH += extendSize; offsetY = extendSize; }
+            if (direction === 'down')  { newH += extendSize; offsetY = 0; }
+            if (direction === 'left')  { newW += extendSize; offsetX = extendSize; }
+            if (direction === 'right') { newW += extendSize; offsetX = 0; }
+
+            canvas.width = newW;
+            canvas.height = newH;
+            const ctx = canvas.getContext('2d');
+
+            // Fill with transparency (will show as black in engines)
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, newW, newH);
+
+            // Draw existing image at offset
+            ctx.drawImage(img, offsetX, offsetY);
+
+            // Set the padded image back onto the canvas
+            img.src = canvas.toDataURL('image/png');
+            img.style.display = 'block';
+
+            // Update dimensions fields
+            document.getElementById('inf-width').value = newW;
+            document.getElementById('inf-height').value = newH;
+
+            // Auto-create mask for the extended region
+            if (window._inpaintActive) {
+                setTimeout(() => {
+                    resizeInpaintCanvas();
+                    const maskCanvas = document.getElementById('inpaint-canvas');
+                    const mctx = maskCanvas.getContext('2d');
+                    mctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+
+                    // Scale to display coordinates
+                    const scaleX = maskCanvas.width / newW;
+                    const scaleY = maskCanvas.height / newH;
+
+                    mctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+                    if (direction === 'up')    mctx.fillRect(0, 0, maskCanvas.width, extendSize * scaleY);
+                    if (direction === 'down')  mctx.fillRect(0, maskCanvas.height - extendSize * scaleY, maskCanvas.width, extendSize * scaleY);
+                    if (direction === 'left')  mctx.fillRect(0, 0, extendSize * scaleX, maskCanvas.height);
+                    if (direction === 'right') mctx.fillRect(maskCanvas.width - extendSize * scaleX, 0, extendSize * scaleX, maskCanvas.height);
+                }, 200);
+            } else {
+                // Auto-enable inpaint mode for outpainting
+                toggleInpaintMode();
+                setTimeout(() => {
+                    const maskCanvas = document.getElementById('inpaint-canvas');
+                    const mctx = maskCanvas.getContext('2d');
+                    const scaleX = maskCanvas.width / newW;
+                    const scaleY = maskCanvas.height / newH;
+
+                    mctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+                    if (direction === 'up')    mctx.fillRect(0, 0, maskCanvas.width, extendSize * scaleY);
+                    if (direction === 'down')  mctx.fillRect(0, maskCanvas.height - extendSize * scaleY, maskCanvas.width, extendSize * scaleY);
+                    if (direction === 'left')  mctx.fillRect(0, 0, extendSize * scaleX, maskCanvas.height);
+                    if (direction === 'right') mctx.fillRect(maskCanvas.width - extendSize * scaleX, 0, extendSize * scaleX, maskCanvas.height);
+                }, 300);
+            }
+        }
+
+        /* ═══ Sprint 12 — Regional Prompting Engine ═══ */
+        window._regionMode = false;
+        window._regionZones = [];
+        const ZONE_COLORS = ['#ef4444','#3b82f6','#10b981','#f59e0b','#8b5cf6','#ec4899','#06b6d4','#f97316'];
+
+        function toggleRegionMode() {
+            window._regionMode = !window._regionMode;
+            const editor = document.getElementById('region-editor');
+            const toolbar = document.getElementById('region-toolbar');
+            const toggleBtn = document.getElementById('inf-region-toggle');
+
+            if (window._regionMode) {
+                editor.classList.add('active');
+                toolbar.classList.add('active');
+                toggleBtn.style.background = 'var(--primary)';
+                toggleBtn.style.color = '#fff';
+                toggleBtn.style.borderColor = 'var(--primary)';
+                // Auto-add first zone if empty
+                if (window._regionZones.length === 0) addRegionZone();
+            } else {
+                editor.classList.remove('active');
+                toolbar.classList.remove('active');
+                toggleBtn.style.background = 'var(--surface-hover)';
+                toggleBtn.style.color = '#94a3b8';
+                toggleBtn.style.borderColor = 'var(--border)';
+            }
+        }
+
+        function addRegionZone() {
+            const editor = document.getElementById('region-editor');
+            const container = document.getElementById('inf-canvas-container');
+            const idx = window._regionZones.length;
+            const color = ZONE_COLORS[idx % ZONE_COLORS.length];
+
+            // Default size/position: evenly distributed grid
+            const cols = Math.ceil(Math.sqrt(idx + 1));
+            const rows = Math.ceil((idx + 1) / cols);
+            const col = idx % cols;
+            const row = Math.floor(idx / cols);
+            const zoneW = 100 / cols;
+            const zoneH = 100 / rows;
+
+            const zone = document.createElement('div');
+            zone.className = 'region-zone';
+            zone.style.borderColor = color;
+            zone.style.left = (col * zoneW) + '%';
+            zone.style.top = (row * zoneH) + '%';
+            zone.style.width = zoneW + '%';
+            zone.style.height = zoneH + '%';
+            zone.dataset.zoneIdx = idx;
+
+            zone.innerHTML = `
+                <div class="zone-header" style="background:${color}44;">
+                    <span>Zone ${idx + 1}</span>
+                    <span class="zone-close" onclick="removeRegionZone(${idx})">✕</span>
+                </div>
+                <textarea placeholder="Prompt for zone ${idx + 1}..."></textarea>
+                <div class="zone-resize"></div>
+            `;
+
+            // Drag to move
+            const header = zone.querySelector('.zone-header');
+            header.addEventListener('mousedown', (e) => {
+                if (e.target.classList.contains('zone-close')) return;
+                e.preventDefault();
+                const editorRect = editor.getBoundingClientRect();
+                const startX = e.clientX - zone.offsetLeft;
+                const startY = e.clientY - zone.offsetTop;
+                function onMove(ev) {
+                    let newX = ev.clientX - startX;
+                    let newY = ev.clientY - startY;
+                    newX = Math.max(0, Math.min(newX, editorRect.width - zone.offsetWidth));
+                    newY = Math.max(0, Math.min(newY, editorRect.height - zone.offsetHeight));
+                    zone.style.left = newX + 'px';
+                    zone.style.top = newY + 'px';
+                }
+                function onUp() {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                }
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+
+            // Drag to resize
+            const resizer = zone.querySelector('.zone-resize');
+            resizer.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const startWidth = zone.offsetWidth;
+                const startHeight = zone.offsetHeight;
+                const startMX = e.clientX;
+                const startMY = e.clientY;
+                function onMove(ev) {
+                    zone.style.width = Math.max(40, startWidth + (ev.clientX - startMX)) + 'px';
+                    zone.style.height = Math.max(40, startHeight + (ev.clientY - startMY)) + 'px';
+                }
+                function onUp() {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                }
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+
+            editor.appendChild(zone);
+            window._regionZones.push({ element: zone, color: color });
+            updateZoneCount();
+        }
+
+        function removeRegionZone(idx) {
+            const zones = window._regionZones;
+            if (idx >= 0 && idx < zones.length) {
+                zones[idx].element.remove();
+                zones.splice(idx, 1);
+                // Re-index remaining zones
+                zones.forEach((z, i) => {
+                    z.element.dataset.zoneIdx = i;
+                    const hdr = z.element.querySelector('.zone-header span:first-child');
+                    if (hdr) hdr.textContent = `Zone ${i + 1}`;
+                    const closeBtn = z.element.querySelector('.zone-close');
+                    if (closeBtn) closeBtn.setAttribute('onclick', `removeRegionZone(${i})`);
+                });
+                updateZoneCount();
+            }
+        }
+
+        function clearAllRegions() {
+            window._regionZones.forEach(z => z.element.remove());
+            window._regionZones = [];
+            updateZoneCount();
+        }
+
+        function updateZoneCount() {
+            const el = document.getElementById('region-zone-count');
+            if (el) el.textContent = `${window._regionZones.length} zone${window._regionZones.length !== 1 ? 's' : ''}`;
+        }
+
+        function getRegionData() {
+            // Returns normalized region data for backend translators
+            // Each zone: { prompt, x, y, w, h } (0-1 normalized to canvas dimensions)
+            if (!window._regionMode || window._regionZones.length === 0) return null;
+            const editor = document.getElementById('region-editor');
+            const editorW = editor.offsetWidth;
+            const editorH = editor.offsetHeight;
+            if (!editorW || !editorH) return null;
+
+            const regions = [];
+            for (const z of window._regionZones) {
+                const el = z.element;
+                const prompt = el.querySelector('textarea')?.value || '';
+                if (!prompt.trim()) continue;
+                regions.push({
+                    prompt: prompt.trim(),
+                    x: el.offsetLeft / editorW,
+                    y: el.offsetTop / editorH,
+                    w: el.offsetWidth / editorW,
+                    h: el.offsetHeight / editorH
+                });
+            }
+            return regions.length > 0 ? regions : null;
+        }
+
+        /* ═══ Sprint 12 — X/Y/Z Parameter Plot ═══ */
+        function toggleXYZPanel() {
+            document.getElementById('xyz-panel').classList.toggle('active');
+        }
+
+        async function runXYZPlot() {
+            const xParam = document.getElementById('xyz-x-param').value;
+            const yParam = document.getElementById('xyz-y-param').value;
+            const zParam = document.getElementById('xyz-z-param').value;
+            const xVals = parseAxisValues(document.getElementById('xyz-x-values').value);
+            const yVals = parseAxisValues(document.getElementById('xyz-y-values').value);
+            const zVals = parseAxisValues(document.getElementById('xyz-z-values').value);
+
+            if (xParam === 'none' || xVals.length === 0) {
+                alert('X axis requires a parameter and at least one value.');
+                return;
+            }
+
+            const statusEl = document.getElementById('xyz-status');
+            const gridEl = document.getElementById('xyz-grid');
+            const basePayload = getInferencePayload();
+
+            // Build the matrix of parameter combinations
+            const combos = [];
+            const xList = xVals.length > 0 ? xVals : ['_default_'];
+            const yList = yVals.length > 0 && yParam !== 'none' ? yVals : ['_default_'];
+            const zList = zVals.length > 0 && zParam !== 'none' ? zVals : ['_default_'];
+
+            for (const z of zList) {
+                for (const y of yList) {
+                    for (const x of xList) {
+                        const p = JSON.parse(JSON.stringify(basePayload));
+                        if (x !== '_default_') applyAxisValue(p, xParam, x);
+                        if (y !== '_default_') applyAxisValue(p, yParam, y);
+                        if (z !== '_default_') applyAxisValue(p, zParam, z);
+                        p._xyz_label = `${xParam}=${x}${y !== '_default_' ? `, ${yParam}=${y}` : ''}${z !== '_default_' ? `, ${zParam}=${z}` : ''}`;
+                        combos.push(p);
+                    }
+                }
+            }
+
+            statusEl.textContent = `Queuing ${combos.length} generation${combos.length !== 1 ? 's' : ''}...`;
+
+            // Queue all to batch
+            let queued = 0;
+            for (const combo of combos) {
+                try {
+                    await fetch('/api/generate/batch', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(combo)
+                    });
+                    queued++;
+                    statusEl.textContent = `Queued ${queued} / ${combos.length}...`;
+                } catch(e) {
+                    console.error('XYZ plot queue error:', e);
+                }
+            }
+
+            statusEl.textContent = `✅ ${queued} generations queued! Check Batch Queue for results.`;
+            
+            // Show grid layout info
+            gridEl.style.display = 'grid';
+            gridEl.style.gridTemplateColumns = `repeat(${xList.length}, 1fr)`;
+            gridEl.innerHTML = combos.map(c => 
+                `<div class="xyz-grid-label">${c._xyz_label}</div>`
+            ).join('');
+        }
+
+        function parseAxisValues(str) {
+            if (!str || !str.trim()) return [];
+            return str.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        }
+
+        function applyAxisValue(payload, param, value) {
+            switch(param) {
+                case 'steps': payload.steps = parseInt(value); break;
+                case 'cfg': payload.cfg = parseFloat(value); break;
+                case 'sampler': payload.sampler = value; break;
+                case 'seed': payload.seed = parseInt(value); break;
+                case 'width': payload.width = parseInt(value); break;
+                case 'height': payload.height = parseInt(value); break;
+                case 'denoise': payload.denoising_strength = parseFloat(value); break;
+            }
+        }
+
+        /* ═══ Sprint 12 — Wildcard Engine ═══ */
+        function resolveWildcards(text) {
+            // Resolve {a|b|c} syntax → pick random option
+            return text.replace(/\{([^}]+)\}/g, (match, group) => {
+                const options = group.split('|').map(s => s.trim());
+                return options[Math.floor(Math.random() * options.length)];
+            });
+        }
+
+        /* ═══ Sprint 12 — Seed Explorer ═══ */
+        async function runSeedExplorer(count = 9) {
+            const basePayload = getInferencePayload();
+            const baseSeed = basePayload.seed === -1 ? Math.floor(Math.random() * 999999999) : basePayload.seed;
+
+            const statusEl = document.getElementById('xyz-status');
+            const gridEl = document.getElementById('xyz-grid');
+            
+            statusEl.textContent = `Queuing ${count} seed variations...`;
+            gridEl.style.display = 'grid';
+            gridEl.style.gridTemplateColumns = 'repeat(3, 1fr)';
+            gridEl.innerHTML = '';
+
+            let queued = 0;
+            for (let i = 0; i < count; i++) {
+                const p = JSON.parse(JSON.stringify(basePayload));
+                p.seed = baseSeed + i;
+                try {
+                    await fetch('/api/generate/batch', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(p)
+                    });
+                    queued++;
+                    gridEl.innerHTML += `<div class="xyz-grid-label">Seed: ${p.seed}</div>`;
+                    statusEl.textContent = `Queued ${queued} / ${count}...`;
+                } catch(e) {
+                    console.error('Seed explorer queue error:', e);
+                }
+            }
+            statusEl.textContent = `✅ ${queued} seed variations queued!`;
+        }
+
+        /* ═══ Sprint 12 — Ollama Integration ═══ */
+        window._ollamaModels = [];
+        async function checkOllamaStatus() {
+            const dot = document.getElementById('ollama-status-dot');
+            try {
+                const res = await fetch('/api/ollama/status');
+                const data = await res.json();
+                if (data.online) {
+                    dot.style.background = '#10b981';
+                    dot.title = `Ollama: Online (${data.models.length} model${data.models.length !== 1 ? 's' : ''})`;
+                    window._ollamaModels = data.models || [];
+                } else {
+                    dot.style.background = '#ef4444';
+                    dot.title = 'Ollama: Offline';
+                    window._ollamaModels = [];
+                }
+            } catch(e) {
+                if (dot) { dot.style.background = '#ef4444'; dot.title = 'Ollama: Offline'; }
+            }
+        }
+        // Check on load and every 30s
+        setTimeout(checkOllamaStatus, 2000);
+        setInterval(checkOllamaStatus, 30000);
+
+        async function enhancePromptWithOllama() {
+            const promptEl = document.getElementById('inf-prompt');
+            const btn = document.getElementById('ollama-enhance-btn');
+            if (!promptEl || !promptEl.value.trim()) {
+                showToast('Enter a prompt first, then click Enhance.');
+                return;
+            }
+            const original = btn.innerHTML;
+            btn.innerHTML = '⏳ Enhancing...';
+            btn.disabled = true;
+            try {
+                const model = window._ollamaModels.length > 0 ? window._ollamaModels[0] : 'llama3.2';
+                const res = await fetch('/api/ollama/enhance', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ prompt: promptEl.value, model: model })
+                });
+                const data = await res.json();
+                if (data.enhanced_prompt) {
+                    promptEl.value = data.enhanced_prompt;
+                    updateTokenCounter();
+                    showToast('✨ Prompt enhanced!');
+                } else {
+                    showToast('⚠️ ' + (data.error || 'Enhancement failed'));
+                }
+            } catch(e) {
+                showToast('⚠️ Ollama not reachable. Is it running?');
+            }
+            btn.innerHTML = original;
+            btn.disabled = false;
         }
 
         /* --- Inference Studio UI Engine --- */
@@ -4627,6 +5651,24 @@
             let a1111ProgressInterval = null;
             let genStartTime = Date.now();
 
+            // Sprint 12: Progress bar helper
+            function updateGenProgress(pct, stepText) {
+                const bar = document.getElementById('gen-progress-bar');
+                const barFill = document.getElementById('gen-progress-fill');
+                const info = document.getElementById('gen-progress-info');
+                if (bar) bar.classList.add('active');
+                if (barFill) barFill.style.width = pct + '%';
+                if (info) { info.classList.add('active'); info.textContent = stepText; }
+            }
+            function hideGenProgress() {
+                const bar = document.getElementById('gen-progress-bar');
+                const barFill = document.getElementById('gen-progress-fill');
+                const info = document.getElementById('gen-progress-info');
+                if (bar) bar.classList.remove('active');
+                if (barFill) barFill.style.width = '0%';
+                if (info) { info.classList.remove('active'); info.textContent = ''; }
+            }
+
             if (engine === 'a1111' || engine === 'forge') {
                 fill.style.width = '5%';
                 fill.classList.add('progress-pulsing');
@@ -4642,7 +5684,10 @@
                         const progData = await progRes.json();
                         if (progData && typeof progData.progress === 'number') {
                             fill.style.width = Math.max(5, progData.progress * 100) + '%';
-                            txt.innerText = `Processing... (${Math.floor(progData.eta_relative || 0)}s)`;
+                            const pct = Math.floor(progData.progress * 100);
+                            const eta = Math.floor(progData.eta_relative || 0);
+                            txt.innerText = `Processing... (${eta}s)`;
+                            updateGenProgress(pct, `Step ${progData.state?.sampling_step || '?'}/${progData.state?.sampling_steps || '?'} — ETA ${eta}s`);
                             if (progData.current_image) {
                                 const canvasImg = document.getElementById('inf-canvas-img');
                                 canvasImg.src = "data:image/png;base64," + progData.current_image;
@@ -4695,8 +5740,10 @@
                                     if(msg.type === 'progress') {
                                         const pfill = document.getElementById('inf-progress-fill');
                                         if(pfill && msg.data.max > 0) {
-                                            pfill.style.width = ((msg.data.value / msg.data.max) * 100) + '%';
+                                            const pct = (msg.data.value / msg.data.max) * 100;
+                                            pfill.style.width = pct + '%';
                                             pfill.classList.remove('progress-pulsing');
+                                            updateGenProgress(pct, `Step ${msg.data.value}/${msg.data.max}`);
                                         }
                                     }
                                 } else {
@@ -4755,6 +5802,7 @@
                                         txt.innerText = "Generate Image";
                                         fill.style.width = '100%';
                                         fill.classList.remove('progress-pulsing');
+                                        hideGenProgress();
                                         setTimeout(() => fill.style.width = '0%', 800);
                                         break;
                                     }
@@ -4776,6 +5824,7 @@
                     txt.innerText = "Generate Image";
                     fill.style.width = '0%';
                     fill.classList.remove('progress-pulsing');
+                    hideGenProgress();
                 } else if(engine === 'fooocus') {
                     if(data.image) {
                         const canvasImg = document.getElementById('inf-canvas-img');
@@ -4788,6 +5837,7 @@
                     txt.innerText = "Generate Image";
                     fill.style.width = '0%';
                     fill.classList.remove('progress-pulsing');
+                    hideGenProgress();
                 }
             } catch(e) {
                 if (a1111ProgressInterval) clearInterval(a1111ProgressInterval);
@@ -4796,6 +5846,7 @@
                 txt.innerText = "Generate Image";
                 fill.style.width = '0%';
                 fill.classList.remove('progress-pulsing');
+                hideGenProgress();
                 if(window.comfyPollInterval) clearInterval(window.comfyPollInterval);
                 if(window.comfyProgressInterval) clearInterval(window.comfyProgressInterval);
                 document.getElementById('inf-canvas-empty').innerText = "No Output";
@@ -5090,8 +6141,8 @@
         function getInferencePayload() {
             // Gather current inference parameters into a payload object
             const payload = {
-                prompt: document.getElementById('inf-prompt')?.value || '',
-                negative: document.getElementById('inf-negative')?.value || '',
+                prompt: resolveWildcards(document.getElementById('inf-prompt')?.value || ''),
+                negative: resolveWildcards(document.getElementById('inf-negative')?.value || ''),
                 steps: parseInt(document.getElementById('inf-steps')?.value || '20'),
                 cfg: parseFloat(document.getElementById('inf-cfg')?.value || '7'),
                 width: parseInt(document.getElementById('inf-width')?.value || '512'),
@@ -5104,6 +6155,25 @@
             // Model
             const modelSel = document.getElementById('inf-model');
             if(modelSel) payload.model = modelSel.value;
+            // Sprint 12: Include inpainting mask if active
+            if (hasInpaintMask()) {
+                payload.mask_b64 = getInpaintMaskBase64();
+                // Also include the current canvas image as init_image for inpainting
+                const canvasImg = document.getElementById('inf-canvas-img');
+                if (canvasImg && canvasImg.src && canvasImg.style.display !== 'none') {
+                    // Convert displayed image to base64
+                    const tmpCanvas = document.createElement('canvas');
+                    tmpCanvas.width = canvasImg.naturalWidth;
+                    tmpCanvas.height = canvasImg.naturalHeight;
+                    tmpCanvas.getContext('2d').drawImage(canvasImg, 0, 0);
+                    payload.init_image_b64 = tmpCanvas.toDataURL('image/png').split(',')[1];
+                }
+            }
+            // Sprint 12: Include regional prompting data if active
+            const regionData = getRegionData();
+            if (regionData) {
+                payload.regions = regionData;
+            }
             return payload;
         }
 
@@ -5234,23 +6304,11 @@
                 if(data.civitai_api_key) localStorage.setItem('civitai_api_key', data.civitai_api_key);
                 if(data.hf_api_key) localStorage.setItem('hf_api_key', data.hf_api_key);
                 
-                // Phase 5: Favorites migration from localStorage to settings.json
-                window.appFavorites = data.favorites || {};
-                const localFavs = localStorage.getItem('ai_favorites');
-                if(localFavs && !data.favorites_migrated) {
-                    try {
-                        const parsedLocal = JSON.parse(localFavs);
-                        if(Object.keys(parsedLocal).length > 0) {
-                            window.appFavorites = { ...window.appFavorites, ...parsedLocal };
-                            fetch('/api/settings', {
-                                method: 'POST',
-                                headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify({ favorites: window.appFavorites, favorites_migrated: true })
-                            }).then(() => localStorage.removeItem('ai_favorites'));
-                            console.log('[Phase 5] Migrated', Object.keys(parsedLocal).length, 'favorites from localStorage to settings.json');
-                        }
-                    } catch(e) { console.warn('Favorites migration failed:', e); }
-                }
+                // Phase 6: Load favorites from SQLite (migrated from settings.json)
+                try {
+                    const favRes = await fetch('/api/favorites');
+                    window.appFavorites = await favRes.json() || {};
+                } catch(e) { window.appFavorites = {}; }
             } catch(e) {
                 console.warn('Failed to load settings from server:', e);
             }
@@ -5555,6 +6613,11 @@
                 showSettingsToast(`Theme switched to ${next}`);
             }, shortcut: '' },
             { icon: '🔀', label: 'A/B Compare Generations', action: () => { switchTab('creations'); showSettingsToast('Open a generation, then click Compare A/B'); }, shortcut: '' },
+            // Sprint 12: New commands
+            { icon: '📊', label: 'Open X/Y/Z Parameter Plot', action: () => { switchTab('inference'); setTimeout(toggleXYZPanel, 300); }, shortcut: '' },
+            { icon: '🌱', label: 'Run Seed Explorer (9 Variations)', action: () => { switchTab('inference'); setTimeout(() => { toggleXYZPanel(); runSeedExplorer(9); }, 300); }, shortcut: '' },
+            { icon: '🖌️', label: 'Toggle Inpaint Mode', action: () => { switchTab('inference'); setTimeout(toggleInpaintMode, 300); }, shortcut: '' },
+            { icon: '📐', label: 'Toggle Regional Prompting', action: () => { switchTab('inference'); setTimeout(toggleRegionMode, 300); }, shortcut: '' },
         ];
         let _cmdActiveIndex = 0;
         let _cmdFiltered = [..._commandRegistry];
@@ -5930,6 +6993,62 @@
                     <div class="ab-pane-meta" id="ab-meta-b"></div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Sprint 12: X/Y/Z Plot Panel -->
+    <div id="xyz-panel" class="xyz-panel">
+        <div class="panel-header">
+            <h3>📊 X/Y/Z Parameter Plot</h3>
+            <button onclick="toggleXYZPanel()" style="background:none; border:none; color:var(--text-muted); font-size:1.3rem; cursor:pointer;">&times;</button>
+        </div>
+        <div class="panel-body">
+            <div class="xyz-axis-config">
+                <label>X Axis</label>
+                <select id="xyz-x-param">
+                    <option value="none">— None —</option>
+                    <option value="steps">Steps</option>
+                    <option value="cfg">CFG Scale</option>
+                    <option value="sampler">Sampler</option>
+                    <option value="seed">Seed</option>
+                    <option value="width">Width</option>
+                    <option value="height">Height</option>
+                    <option value="denoise">Denoise Strength</option>
+                </select>
+                <input type="text" id="xyz-x-values" placeholder="e.g. 10, 20, 30, 50">
+                <div class="values-hint">Comma-separated values</div>
+            </div>
+            <div class="xyz-axis-config">
+                <label>Y Axis</label>
+                <select id="xyz-y-param">
+                    <option value="none">— None —</option>
+                    <option value="steps">Steps</option>
+                    <option value="cfg">CFG Scale</option>
+                    <option value="sampler">Sampler</option>
+                    <option value="seed">Seed</option>
+                    <option value="width">Width</option>
+                    <option value="height">Height</option>
+                    <option value="denoise">Denoise Strength</option>
+                </select>
+                <input type="text" id="xyz-y-values" placeholder="e.g. 5.0, 7.0, 10.0">
+                <div class="values-hint">Comma-separated values</div>
+            </div>
+            <div class="xyz-axis-config">
+                <label>Z Axis (optional)</label>
+                <select id="xyz-z-param">
+                    <option value="none">— None —</option>
+                    <option value="steps">Steps</option>
+                    <option value="cfg">CFG Scale</option>
+                    <option value="sampler">Sampler</option>
+                    <option value="seed">Seed</option>
+                </select>
+                <input type="text" id="xyz-z-values" placeholder="Optional">
+                <div class="values-hint">Comma-separated values (empty = skip)</div>
+            </div>
+
+            <button onclick="runXYZPlot()" class="btn-download" style="width:100%; height: 44px; font-size:1rem; margin-top: 10px;">⚡ Run X/Y/Z Plot</button>
+            <div id="xyz-status" style="color:var(--text-muted); font-size:0.82rem; text-align:center; margin-top:8px;"></div>
+            <div class="xyz-grid-container" id="xyz-grid" style="display:none;"></div>
         </div>
     </div>
 

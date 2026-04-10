@@ -1,6 +1,16 @@
 ---
 name: Asset Crawler & Metadata Scraper
 description: Background pipeline that indexes Global_Vault files by computing SHA-256 hashes, queries CivitAI and HuggingFace APIs for model metadata and thumbnails, generates sentence-transformer embeddings for semantic search, and checks for version updates.
+keywords:
+  - crawler
+  - hash
+  - SHA-256
+  - CivitAI
+  - HuggingFace
+  - metadata
+  - thumbnail
+  - embedding
+  - semantic search
 ---
 
 # Asset Crawler & Metadata Scraper

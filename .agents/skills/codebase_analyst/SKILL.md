@@ -1,6 +1,12 @@
 ---
 name: Codebase Analyst
 description: Read-only investigative expert for system architecture, specific features, and detailed code flows. Explains in clear business language.
+keywords:
+  - analysis
+  - architecture overview
+  - code flow
+  - investigation
+  - read-only
 ---
 
 # Codebase Analyst Skill

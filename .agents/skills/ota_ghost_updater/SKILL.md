@@ -1,6 +1,13 @@
 ---
 name: OTA Ghost Updater
 description: Self-healing over-the-air update system that kills the running server process, applies code patches via git pull or zip extraction while preserving all user data (Global_Vault, packages, settings, database), and restarts the dashboard automatically.
+keywords:
+  - update
+  - OTA
+  - git pull
+  - self-healing
+  - restart
+  - sacred files
 ---
 
 # OTA Ghost Updater
