@@ -1938,6 +1938,43 @@
     </div>
 
     <script>
+        // ═══ Unified API Call Wrapper ════════════════════════════════
+        class ApiError extends Error {
+            constructor(message, status) {
+                super(message);
+                this.name = 'ApiError';
+                this.status = status;
+            }
+        }
+
+        /**
+         * Centralized fetch wrapper with consistent error handling.
+         * Normalizes all backend error shapes into a single ApiError.
+         * @param {string} url - The API endpoint
+         * @param {object} options - Standard fetch options (method, headers, body, etc.)
+         * @returns {Promise<object>} - Parsed JSON response
+         * @throws {ApiError} - On HTTP errors or network failures
+         */
+        async function apiCall(url, options = {}) {
+            try {
+                const res = await fetch(url, options);
+                // Handle non-JSON responses (binary, streaming, etc.)
+                const ct = res.headers.get('content-type') || '';
+                if (!ct.includes('application/json')) {
+                    if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status);
+                    return res;
+                }
+                const data = await res.json();
+                if (data.status === 'error' || data.error) {
+                    throw new ApiError(data.message || data.error || 'Unknown error', res.status);
+                }
+                return data;
+            } catch (e) {
+                if (e instanceof ApiError) throw e;
+                throw new ApiError(`Network error: ${e.message}`, 0);
+            }
+        }
+
         // Global State
         let activeModels = {}; 
         let currentModalModel = null;

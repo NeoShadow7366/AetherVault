@@ -29,6 +29,26 @@ if _BACKEND_DIR not in sys.path:
 from metadata_db import MetadataDB
 from symlink_manager import create_safe_directory_link
 from proxy_translators import build_comfy_workflow, build_a1111_payload, build_fooocus_payload
+from process_registry import ProcessRegistry
+from server_state import CachedValue, LRUCache, BatchQueue
+from functools import wraps
+
+# ── Unified Error Handling Decorator ─────────────────────────────
+def api_handler(method):
+    """Decorator that catches exceptions and sends consistent JSON error responses.
+    Ensures every API handler returns {"status": "error", "message": ...} on failure."""
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except ValueError as e:
+            self.send_json_response({"status": "error", "message": str(e)}, 400)
+        except FileNotFoundError as e:
+            self.send_json_response({"status": "error", "message": str(e)}, 404)
+        except Exception as e:
+            logging.error(f"Handler {method.__name__} failed: {e}", exc_info=True)
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
+    return wrapper
 
 # ── Server State Globals ─────────────────────────────────────────
 global_http_server = None
@@ -84,8 +104,11 @@ def _get_settings() -> dict:
             return {"theme": "dark", "civitai_api_key": "", "auto_updates": True}
 
 def _save_settings(data: dict) -> None:
-    """Thread-safe settings save with merge semantics."""
+    """Thread-safe settings save with merge semantics and atomic write.
+    Uses os.replace() for atomic rename which prevents corruption if
+    the process crashes mid-write."""
     settings_path = os.path.join(_ROOT_DIR, ".backend", "settings.json")
+    tmp_path = settings_path + '.tmp'
     with _settings_lock:
         existing = {}
         if os.path.exists(settings_path):
@@ -95,9 +118,11 @@ def _save_settings(data: dict) -> None:
             except (json.JSONDecodeError, OSError):
                 existing = {}
         existing.update(data)
-        with open(settings_path, 'w', encoding='utf-8') as f:
+        # Atomic write: write to temp file, then rename (atomic on NTFS and POSIX)
+        with open(tmp_path, 'w', encoding='utf-8') as f:
             json.dump(existing, f, indent=4)
-        # Invalidate cache
+        os.replace(tmp_path, settings_path)
+        # Update cache
         _settings_cache["data"] = existing
         try:
             _settings_cache["mtime"] = os.path.getmtime(settings_path)
@@ -127,20 +152,13 @@ def graceful_teardown():
             print(f"[TEARDOWN] HTTP shutdown warning: {e}")
             sys.stdout.flush()
 
-    # 2. Kill ALL sandbox processes (ComfyUI, etc.)
+    # 2. Kill ALL sandbox processes via thread-safe registry
     print("[TEARDOWN] Terminating sandbox engines...")
     sys.stdout.flush()
     try:
-        for package_id, entry in list(AIWebServer.running_processes.items()):
-            proc = entry.get("process") if isinstance(entry, dict) else entry
-            if proc and proc.poll() is None:
-                print(f"[TEARDOWN] Killing sandbox '{package_id}' (PID {proc.pid})")
-                sys.stdout.flush()
-                if os.name == 'nt':
-                    subprocess.call(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
-                                    creationflags=0x08000000)
-                else:
-                    proc.kill()
+        killed = AIWebServer.running_processes.kill_all()
+        print(f"[TEARDOWN] Killed {killed} sandbox process(es).")
+        sys.stdout.flush()
     except Exception as e:
         print(f"[TEARDOWN] Sandbox cleanup warning: {e}")
         sys.stdout.flush()
@@ -187,7 +205,7 @@ def graceful_teardown():
     os._exit(0)
 
 # ── Sprint 9: Vault Size Cache (updated by background scanner) ───
-_vault_size_cache = {"size": 0, "expires": 0}
+_vault_size_cache = CachedValue(ttl=300)  # 5 min TTL
 
 # ── Sprint 9: In-Memory Batch Generation Queue ──────────────────
 _batch_queue = []  # list of {id, status, payload, result, error}
@@ -195,12 +213,11 @@ _batch_lock = threading.Lock()
 _batch_worker_running = False
 _BATCH_MAX_HISTORY = 50  # Purge completed jobs beyond this limit
 
-# ── Phase 5: Civitai Search Cache (max 50 entries) ───────────
-_civitai_search_cache = {}  # dict of { cache_key: { "timestamp": float, "data": list } }
-_CIVITAI_CACHE_MAX = 50
+# ── Phase 5: Civitai Search Cache (LRU, max 50, 15min TTL) ────
+_civitai_search_cache = LRUCache(max_size=50, ttl=900)
 
 # ── Dashboard Stats Cache (30s TTL) ──────────────────────────────
-_server_stats_cache = {"data": None, "expires": 0}
+_server_stats_cache = CachedValue(ttl=30)
 _SERVER_STATS_TTL = 30
 
 # ── Engine Proxy Configuration ───────────────────────────────────
@@ -211,45 +228,20 @@ _ENGINE_CONFIG = {
     "fooocus": {"port": 8888, "translator": build_fooocus_payload, "gen_endpoint": "/v1/generation/text-to-image"},
 }
 
-class AIWebServer(BaseHTTPRequestHandler):
+from handlers.gallery_handlers import GalleryHandlersMixin
+
+class AIWebServer(GalleryHandlersMixin, BaseHTTPRequestHandler):
     root_dir = _ROOT_DIR
     db_path = os.path.join(_ROOT_DIR, ".backend", "metadata.sqlite")
     static_dir = os.path.join(_ROOT_DIR, ".backend", "static")
-    running_processes = {}  # PID tracking for launched packages
-    running_installs = {}   # PID tracking for active installer processes
+    running_processes = ProcessRegistry()   # Thread-safe PID tracking for launched packages
+    running_installs = ProcessRegistry()    # Thread-safe PID tracking for active installer processes
 
-    # ── Shared Process Kill Helper ───────────────────────────────
+    # ── Shared Process Kill Helper (delegates to ProcessRegistry) ──
     @classmethod
     def _kill_tracked_process(cls, package_id: str, remove_from_dict: bool = True) -> bool:
-        """Kill a tracked sandbox process. Returns True if a process was killed."""
-        entry = cls.running_processes.get(package_id)
-        if not entry:
-            return False
-        proc = entry.get("process") if isinstance(entry, dict) else entry
-        log_file = entry.get("log_file") if isinstance(entry, dict) else None
-        killed = False
-        if proc and proc.poll() is None:
-            try:
-                if os.name == 'nt':
-                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
-                                   check=False, capture_output=True)
-                else:
-                    proc.send_signal(signal.SIGTERM)
-                    try:
-                        proc.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                killed = True
-            except Exception as e:
-                logging.error(f"Error killing {package_id}: {e}")
-        if log_file:
-            try:
-                log_file.close()
-            except Exception:
-                pass
-        if remove_from_dict and package_id in cls.running_processes:
-            del cls.running_processes[package_id]
-        return killed
+        """Kill a tracked sandbox process. Delegates to thread-safe ProcessRegistry."""
+        return cls.running_processes.kill(package_id, remove=remove_from_dict)
 
     def do_OPTIONS(self):
         """Handle CORS preflight requests."""
@@ -457,15 +449,12 @@ class AIWebServer(BaseHTTPRequestHandler):
             type_filter = qs.get("type", [""])[0]
             offset = int(qs.get("offset", ["0"])[0])
             
-            # Cache Check (15 mins TTL)
+            # Cache Check (LRU, auto-evicts)
             cache_key = f"{query}_{type_filter}_{offset}"
-            global _civitai_search_cache
-            now = time.time()
-            if cache_key in _civitai_search_cache:
-                cached = _civitai_search_cache[cache_key]
-                if now - cached["timestamp"] < 900:
-                    self.send_json_response({"items": cached["data"]})
-                    return
+            cached_items = _civitai_search_cache.get(cache_key)
+            if cached_items is not None:
+                self.send_json_response({"items": cached_items})
+                return
             
             payload = {
                 "queries": [
@@ -555,11 +544,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                 }
                 items.append(v1_item)
                 
-            _civitai_search_cache[cache_key] = {"timestamp": now, "data": items}
-            # Evict oldest entries if cache exceeds max size
-            if len(_civitai_search_cache) > _CIVITAI_CACHE_MAX:
-                oldest_key = min(_civitai_search_cache, key=lambda k: _civitai_search_cache[k]["timestamp"])
-                del _civitai_search_cache[oldest_key]
+            _civitai_search_cache.set(cache_key, items)
             self.send_json_response({"items": items})
         except Exception as e:
             logging.error(f"Target CivitAI proxy search failed: {e}")
@@ -647,21 +632,8 @@ class AIWebServer(BaseHTTPRequestHandler):
                         except (json.JSONDecodeError, OSError) as e:
                             logging.warning(f"Failed to read manifest for {d}: {e}")
                     
-                    # Add running status by evaluating process handle
-                    entry = AIWebServer.running_processes.get(d)
-                    proc = entry.get("process") if isinstance(entry, dict) else entry
-                    if proc and proc.poll() is None:
-                        pkg_info["is_running"] = True
-                    else:
-                        pkg_info["is_running"] = False
-                        if entry:
-                            # Close leaked log file handle if present
-                            if isinstance(entry, dict) and entry.get("log_file"):
-                                try:
-                                    entry["log_file"].close()
-                                except Exception:
-                                    pass
-                            del AIWebServer.running_processes[d]
+                    # Add running status via thread-safe ProcessRegistry
+                    pkg_info["is_running"] = AIWebServer.running_processes.is_running(d)
 
                     # Disk usage from cache (non-blocking)
                     pkg_info["disk_size_mb"] = AIWebServer._disk_size_cache.get(d)
@@ -745,6 +717,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, OSError) as e:
             self.send_json_response({"status": "success", "jobs": {}})
 
+    @api_handler
     def handle_install(self, data):
         recipe_id = data.get("recipe_id")
         if not recipe_id:
@@ -764,9 +737,8 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception:
             app_id = recipe_id
 
-        # Guard: Reject duplicate installs for the same app
-        existing = AIWebServer.running_installs.get(app_id)
-        if existing and existing.poll() is None:
+        # Guard: Reject duplicate installs for the same app (thread-safe check)
+        if AIWebServer.running_installs.is_running(app_id):
             self.send_json_response({
                 "status": "error",
                 "message": f"{app_id} is already being installed. Please wait for it to finish."
@@ -783,10 +755,11 @@ class AIWebServer(BaseHTTPRequestHandler):
             kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 512)
             
         proc = subprocess.Popen([sys.executable, installer_script, recipe_path], **kwargs)
-        AIWebServer.running_installs[app_id] = proc
+        AIWebServer.running_installs.register(app_id, proc)
         
         self.send_json_response({"status": "success", "message": "Installation started in background"})
 
+    @api_handler
     def handle_launch(self, data):
         package_id = data.get("package_id")
         if not package_id:
@@ -794,15 +767,11 @@ class AIWebServer(BaseHTTPRequestHandler):
             return
 
         # Guard: Prevent double-launch — return existing URL if already running
-        existing = AIWebServer.running_processes.get(package_id)
-        if existing:
-            proc = existing.get("process") if isinstance(existing, dict) else existing
-            if proc and proc.poll() is None:
-                # Already running — resolve port and return URL
-                port = existing.get("port", 7860) if isinstance(existing, dict) else 7860
-                url = f"http://127.0.0.1:{port}"
-                self.send_json_response({"status": "success", "message": "Package already running.", "url": url, "already_running": True})
-                return
+        if AIWebServer.running_processes.is_running(package_id):
+            port = AIWebServer.running_processes.get_port(package_id) or 7860
+            url = f"http://127.0.0.1:{port}"
+            self.send_json_response({"status": "success", "message": "Package already running.", "url": url, "already_running": True})
+            return
 
         package_path = os.path.join(self.root_dir, "packages", package_id)
         manifest_path = os.path.join(package_path, "manifest.json")
@@ -899,11 +868,12 @@ class AIWebServer(BaseHTTPRequestHandler):
         _fallback_ports = {"comfyui": 8188, "forge": 7860, "auto1111": 7861, "fooocus": 8888}
         port = manifest.get("port", _fallback_ports.get(package_id, 7860))
         
-        AIWebServer.running_processes[package_id] = {"process": p, "log_file": log_file, "port": port}
+        AIWebServer.running_processes.register(package_id, p, log_file=log_file, port=port)
         url = f"http://127.0.0.1:{port}"
         
         self.send_json_response({"status": "success", "message": "Package starting...", "url": url, "port": port})
 
+    @api_handler
     def handle_repair_dependency(self, data):
         package_id = data.get("package_id")
         if not package_id:
@@ -939,6 +909,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": f"Repair failed: {str(e)}"}, 500)
 
+    @api_handler
     def handle_repair_install(self, data):
         """Repair a corrupted package by re-running the install pipeline.
         
@@ -980,14 +951,13 @@ class AIWebServer(BaseHTTPRequestHandler):
         if os.name == 'nt':
             kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 512)
 
-        # Track to prevent duplicate installs
-        existing = AIWebServer.running_installs.get(package_id)
-        if existing and existing.poll() is None:
+        # Track to prevent duplicate installs (thread-safe check)
+        if AIWebServer.running_installs.is_running(package_id):
             self.send_json_response({"status": "error", "message": f"{package_id} repair is already in progress."}, 409)
             return
 
         proc = subprocess.Popen([sys.executable, installer_script, recipe_path], **kwargs)
-        AIWebServer.running_installs[package_id] = proc
+        AIWebServer.running_installs.register(package_id, proc)
 
         self.send_json_response({"status": "success", "message": f"Repair started for {package_id}. The app will be re-downloaded."})
 
@@ -998,7 +968,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
             return
 
-        if package_id not in AIWebServer.running_processes:
+        if not AIWebServer.running_processes.is_running(package_id):
             self.send_json_response({"status": "error", "message": "Package not running or not tracked"}, 404)
             return
 
@@ -1021,6 +991,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         # Re-launch via the existing handler
         self.handle_launch(data)
 
+    @api_handler
     def handle_uninstall(self, data):
         package_id = data.get("package_id")
         if not package_id:
@@ -1066,6 +1037,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
+    @api_handler
     def handle_install_extension(self, data):
         package_id = data.get("package_id")
         repo_url = data.get("repo_url")
@@ -1149,6 +1121,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
+    @api_handler
     def handle_vault_updates(self, data):
         updater_script = os.path.join(self.root_dir, ".backend", "update_checker.py")
         python_exe = sys.executable
@@ -1162,6 +1135,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
+    @api_handler
     def handle_vault_health_check(self, data):
         """Checks vault symlinks/junctions in installed packages for broken targets."""
         broken_links = 0
@@ -1192,6 +1166,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                                 
         self.send_json_response({"status": "success", "message": f"Repaired {broken_links} broken symlinks/junctions in packages."})
 
+    @api_handler
     def handle_vault_repair(self, data):
         """POST /api/vault/repair — re-fetch metadata + thumbnails for a model.
         Accepts file_hash directly, or falls back to filename-based lookup."""
@@ -1291,6 +1266,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
+    @api_handler
     def handle_download(self, data):
         url = data.get("url")
         filename = data.get("filename")
@@ -1396,6 +1372,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         else:
             self.send_json_response({"status": "success", "message": "Already empty"})
 
+    @api_handler
     def handle_delete_model(self, data):
         filename = data.get("filename")
         category = data.get("category")
@@ -1417,6 +1394,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         else:
             self.send_json_response({"status": "error", "message": "File not found"}, 404)
 
+    @api_handler
     def handle_import_file(self, data):
         src_path = data.get("path")
         category = data.get("category", "")
@@ -1455,98 +1433,6 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
-    def handle_gallery_list(self):
-        qs = parse_qs(urlparse(self.path).query)
-        sort = qs.get("sort", ["newest"])[0]
-        tag = qs.get("tag", [""])[0]
-        try:
-            db = _get_db()
-            if tag:
-                rows = db.list_generations_by_tag(tag)
-            else:
-                rows = db.list_generations(sort=sort)
-                
-            # Self-heal: Collect stale IDs and batch-delete them
-            valid_rows = []
-            stale_ids = []
-            for r in rows:
-                img_path = r.get("image_path", "")
-                if not img_path:
-                    stale_ids.append(r.get("id"))
-                elif img_path.startswith("data:") or img_path.startswith("http://") or img_path.startswith("https://") or img_path.startswith("/api/"):
-                    valid_rows.append(r)
-                elif os.path.exists(img_path):
-                    valid_rows.append(r)
-                else:
-                    stale_ids.append(r.get("id"))
-            
-            # Single batch DELETE instead of N individual queries
-            if stale_ids:
-                db.batch_delete_generations(stale_ids)
-                logging.info(f"Gallery self-heal: removed {len(stale_ids)} stale entries.")
-            
-            self.send_json_response({"status": "success", "generations": valid_rows})
-        except Exception as e:
-            self.send_json_response({"status": "error", "message": str(e)}, 500)
-
-    def handle_gallery_tags(self):
-        """GET /api/gallery/tags — returns unique tags from all generations."""
-        try:
-
-            db = _get_db()
-            tags = db.get_gallery_tags()
-            self.send_json_response({"status": "success", "tags": tags})
-        except Exception as e:
-            self.send_json_response({"status": "error", "message": str(e)}, 500)
-
-    def handle_gallery_save(self, data):
-        try:
-
-            db = _get_db()
-            row_id = db.save_generation(
-                image_path=data.get("image_path"),
-                prompt=data.get("prompt", ""),
-                negative=data.get("negative", ""),
-                model=data.get("model", ""),
-                seed=data.get("seed"),
-                steps=data.get("steps"),
-                cfg=data.get("cfg"),
-                sampler=data.get("sampler", ""),
-                width=data.get("width"),
-                height=data.get("height"),
-                extra_json=json.dumps(data.get("extra", {}))
-            )
-            self.send_json_response({"status": "success", "id": row_id})
-        except Exception as e:
-            self.send_json_response({"status": "error", "message": str(e)}, 500)
-
-    def handle_gallery_delete(self, data):
-        gen_id = data.get("id")
-        if not gen_id:
-            self.send_json_response({"status": "error", "message": "Missing id"}, 400)
-            return
-        try:
-
-            db = _get_db()
-            db.delete_generation(gen_id)
-            self.send_json_response({"status": "success"})
-        except Exception as e:
-            self.send_json_response({"status": "error", "message": str(e)}, 500)
-
-    def handle_gallery_rate(self, data):
-        gen_id = data.get("id")
-        rating = data.get("rating", 0)
-        if not gen_id:
-            self.send_json_response({"status": "error", "message": "Missing id"}, 400)
-            return
-        try:
-
-            db = _get_db()
-            db.rate_generation(gen_id, rating)
-            self.send_json_response({"status": "success"})
-        except Exception as e:
-            self.send_json_response({"status": "error", "message": str(e)}, 500)
-
     def handle_open_folder(self, data):
         category = data.get("category")
         if not category:
@@ -1566,6 +1452,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
+    @api_handler
     def handle_comfy_proxy(self, data):
         endpoint = data.get("endpoint")
         if not endpoint:
@@ -1611,7 +1498,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             err_msg = str(e)
             if "Connection refused" in err_msg or "WinError 10061" in err_msg or "RemoteDisconnected" in err_msg:
                 entry = AIWebServer.running_processes.get("comfyui")
-                p = entry.get("process") if isinstance(entry, dict) else entry
+                p = entry.get("process") if entry else None
                 if p and p.poll() is not None:
                     # Process died quietly. Parse logs.
                     log_path = os.path.join(self.root_dir, "packages", "comfyui", "runtime.log")
@@ -1693,6 +1580,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             logging.warning(f"Failed to upload {filename} to ComfyUI: {e}")
             return None
 
+    @api_handler
     def _proxy_to_engine(self, engine_name: str, data: dict):
         """Consolidated proxy dispatcher for A1111, Forge, and Fooocus backends.
         Uses _ENGINE_CONFIG for port/translator lookup."""
@@ -1748,7 +1636,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             # Add cleared_at timestamp via thread-safe settings helper
             _save_settings({"activity_cleared_at": time.time()})
             # Invalidate stats cache so next poll sees the change instantly
-            _server_stats_cache["data"] = None
+            _server_stats_cache.invalidate()
             self.send_json_response({"status": "success"})
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
@@ -1888,6 +1776,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
+    @api_handler
     def handle_import_scan(self, data):
         try:
 
@@ -1914,6 +1803,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
+    @api_handler
     def handle_vault_export(self, data):
         """POST /api/vault/export — export models as metadata JSON or streaming zip."""
         filenames = data.get("filenames", [])
@@ -1971,7 +1861,6 @@ class AIWebServer(BaseHTTPRequestHandler):
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
     def handle_server_status(self):
-        global _vault_size_cache, _server_stats_cache
         try:
             db = _get_db()
             
@@ -1983,20 +1872,20 @@ class AIWebServer(BaseHTTPRequestHandler):
 
             # Cache expensive DB queries with 30s TTL (polled every 3s = 10x reduction)
             now = time.time()
-            if _server_stats_cache["data"] is None or now >= _server_stats_cache["expires"]:
+            cached = _server_stats_cache.get()
+            if cached is None:
                 unpopulated = len(db.get_unpopulated_models())
                 stats = db.get_dashboard_stats()
                 raw_generations = db.get_recent_activity(limit=5)
                 category_distribution = db.get_vault_category_distribution()
-                _server_stats_cache["data"] = {
+                cached = {
                     "unpopulated": unpopulated,
                     "stats": stats,
                     "raw_generations": raw_generations,
                     "category_distribution": category_distribution
                 }
-                _server_stats_cache["expires"] = now + _SERVER_STATS_TTL
+                _server_stats_cache.set(cached)
             
-            cached = _server_stats_cache["data"]
             unpopulated = cached["unpopulated"]
             stats = cached["stats"]
             raw_generations = cached["raw_generations"]
@@ -2028,8 +1917,8 @@ class AIWebServer(BaseHTTPRequestHandler):
                     lan_ip = "unknown"
 
             # Vault size: read from cache (updated by background scanner or 60s inline fallback)
-            vault_size_bytes = _vault_size_cache["size"]
-            if vault_size_bytes == 0 and now >= _vault_size_cache["expires"]:
+            vault_size_bytes = _vault_size_cache.get(default=0)
+            if vault_size_bytes == 0:
                 # First-time only fallback if background scanner hasn't run yet
                 def _calc_vault_size():
                     vault_dir = os.path.join(self.root_dir, "Global_Vault")
@@ -2041,8 +1930,7 @@ class AIWebServer(BaseHTTPRequestHandler):
                                     total += os.path.getsize(os.path.join(root, f))
                                 except OSError:
                                     pass
-                    _vault_size_cache["size"] = total
-                    _vault_size_cache["expires"] = time.time() + 300  # 5 min TTL
+                    _vault_size_cache.set(total)
                 threading.Thread(target=_calc_vault_size, daemon=True).start()
 
             # Installed / running packages
@@ -2050,7 +1938,7 @@ class AIWebServer(BaseHTTPRequestHandler):
             installed_packages = 0
             if os.path.exists(packages_dir):
                 installed_packages = sum(1 for d in os.listdir(packages_dir) if os.path.isdir(os.path.join(packages_dir, d)))
-            running_packages = len(AIWebServer.running_processes)
+            running_packages = AIWebServer.running_processes.count_running()
 
             # Filter recent activity by cleared-at timestamp
             recent_generations = []
@@ -2107,6 +1995,7 @@ class AIWebServer(BaseHTTPRequestHandler):
 
     # ── Sprint 9: Batch Generation Queue ────────────────────────────
 
+    @api_handler
     def handle_batch_generate(self, data):
         """POST /api/generate/batch — add one or more payloads to the batch queue."""
         global _batch_worker_running
@@ -2339,6 +2228,7 @@ class AIWebServer(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json_response({"error": f"Ollama request failed: {str(e)}"}, 500)
 
+    @api_handler
     def handle_vault_bulk_delete(self, data):
         models = data.get("models", [])
         if not models:

@@ -110,10 +110,10 @@ class VaultCrawler:
                         vault_size += os.path.getsize(os.path.join(root, f))
                     except OSError:
                         pass
-            # Write to the shared cache used by server.py handle_server_status
-            if hasattr(sys.modules.get('server', None), '_vault_size_cache'):
-                sys.modules['server']._vault_size_cache["size"] = vault_size
-                sys.modules['server']._vault_size_cache["expires"] = time.time() + 300
+            # Write to the shared CachedValue used by server.py handle_server_status
+            server_mod = sys.modules.get('server', None)
+            if server_mod and hasattr(server_mod, '_vault_size_cache'):
+                server_mod._vault_size_cache.set(vault_size)
         except Exception:
             pass  # Non-critical — dashboard will compute its own fallback
 
