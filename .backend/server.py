@@ -820,6 +820,22 @@ def run_server(port=8080):
             logging.info(f"LAN sharing enabled — accessible at http://0.0.0.0:{port}")
     
     logging.info(f"Starting lightweight Web Server on http://localhost:{port}")
+
+    # ── Auto-rebuild index.html from src/ modules if stale ──
+    try:
+        src_dir = os.path.join(root_dir, ".backend", "static", "src")
+        build_script = os.path.join(src_dir, "build.py")
+        output_html = os.path.join(root_dir, ".backend", "static", "index.html")
+        if os.path.exists(build_script):
+            import glob
+            src_files = [os.path.join(src_dir, "base.html")] + glob.glob(os.path.join(src_dir, "js", "*.js"))
+            output_mtime = os.path.getmtime(output_html) if os.path.exists(output_html) else 0
+            newest_src = max((os.path.getmtime(f) for f in src_files if os.path.exists(f)), default=0)
+            if newest_src > output_mtime:
+                logging.info("Rebuilding index.html from src/ modules (source files changed)...")
+                subprocess.run([sys.executable, build_script], cwd=src_dir, check=True)
+    except Exception as e:
+        logging.warning(f"Auto-rebuild skipped: {e}")
     start_background_scanners()
     try:
         global_http_server.serve_forever()
