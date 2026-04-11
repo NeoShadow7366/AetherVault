@@ -59,8 +59,67 @@
                 updateDashboardCards(data);
             } catch(e) {}
         }
-        setInterval(checkSystemStatus, 3000);
-        setInterval(pollDownloads, 1000); // 1-second background poll
+        setInterval(checkSystemStatus, 15000); // Reduced from 3s — SSE provides real-time updates
+        setInterval(pollDownloads, 10000); // Reduced from 1s — SSE download_progress pushes changes
+
+        // ── SSE Consumer Hooks ──────────────────────────────────
+        // Wire SSE events to existing UI update functions.
+        // These fire immediately on server push, while the setIntervals
+        // above serve as a safety-net fallback at reduced frequency.
+
+        window._onSSEDownloadProgress = function(data) {
+            // Update the active-downloads toast strip in the main UI
+            if (data.jobs) {
+                try {
+                    const container = document.getElementById('active-downloads');
+                    if (!container) return;
+                    container.innerHTML = '';
+                    Object.keys(data.jobs).forEach(jobId => {
+                        const j = data.jobs[jobId];
+                        if (j.status === 'completed' || j.status === 'error') {
+                            if (j.status === 'completed' && !knownCompletedJobs.has(jobId)) {
+                                knownCompletedJobs.add(jobId);
+                                setTimeout(loadModels, 2000);
+                            }
+                            return;
+                        }
+                        const progress = j.progress || 0;
+                        const statText = j.status === 'starting' ? 'Initializing...' : `${progress}%`;
+                        container.innerHTML += `
+                            <div class="download-toast">
+                                <div style="font-size:0.85rem; font-weight:600; margin-bottom:5px;">Downloading: ${j.model_name}</div>
+                                <div style="font-size:0.75rem; color:var(--text-muted); display:flex; justify-content:space-between;">
+                                    <span>${j.filename}</span><span>${statText}</span>
+                                </div>
+                                <div class="dl-bar-bg"><div class="dl-bar-fill" style="width: ${progress}%"></div></div>
+                            </div>`;
+                    });
+                } catch(e) {}
+            }
+            // Also update the download status modal if it's visible
+            const modal = document.getElementById('dl-status-modal');
+            if (modal && modal.style.display === 'flex') {
+                updateDownloadStatus();
+            }
+            // Update badge
+            const badge = document.getElementById('ex-dl-badge');
+            if (badge) {
+                if (data.active_count > 0) {
+                    badge.innerText = data.active_count;
+                    badge.style.display = 'block';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        };
+
+        window._onSSEServerStatus = function(data) {
+            // Lightweight push — update running-packages counter in real-time
+            const el = document.getElementById('dash-running');
+            if (el && data.running_packages !== undefined) {
+                el.innerText = data.running_packages;
+            }
+        };
 
         /* ═════════════════════════════════════════════
            SPRINT 9 — Dashboard Intelligence

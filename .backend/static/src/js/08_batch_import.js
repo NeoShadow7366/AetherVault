@@ -109,6 +109,18 @@
             if(panel.classList.contains('open')) refreshBatchPanel();
         }
 
+        // ── SSE Consumer: Batch Updates ──────────────────────────
+        window._onSSEBatchUpdate = function(data) {
+            // Server pushed a batch job status change — refresh the panel UI
+            refreshBatchPanel();
+            // Show toast notification for completion
+            if (data.status === 'done') {
+                showToast('🎨 Batch job completed');
+            } else if (data.status === 'failed') {
+                showToast('❌ Batch job failed: ' + (data.error || 'Unknown error'));
+            }
+        };
+
         /* ═════════════════════════════════════════════
            SPRINT 9 — Vault Import from Backup
         ═════════════════════════════════════════════ */

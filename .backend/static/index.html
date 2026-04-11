@@ -4491,6 +4491,60 @@
             } catch(e) { alert("Error removing extension"); }
         }
 
+        // ── SSE Consumer: Install Progress ──────────────────────────
+        window._onSSEInstallProgress = function(data) {
+            // data is the full install_jobs.json content keyed by appId
+            if (!data || typeof data !== 'object') return;
+            for (const [appId, job] of Object.entries(data)) {
+                const phaseEl = document.getElementById(`install-phase-${appId}`);
+                const pctEl = document.getElementById(`install-pct-${appId}`);
+                const barEl = document.getElementById(`install-bar-${appId}`);
+                const logEl = document.getElementById(`install-log-${appId}`);
+                const btn = document.getElementById(`install-btn-${appId}`);
+                const progressEl = document.getElementById(`install-progress-${appId}`);
+
+                // Make progress section visible if it exists
+                if (progressEl) progressEl.style.display = 'block';
+
+                if (phaseEl) phaseEl.innerText = job.phase || 'Working...';
+                if (pctEl) pctEl.innerText = `${job.percent || 0}%`;
+                if (barEl) barEl.style.width = `${job.percent || 0}%`;
+                if (logEl && job.log?.length) {
+                    logEl.innerText = job.log.join('\n');
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+
+                if (job.status === 'completed') {
+                    if (barEl) barEl.style.background = 'linear-gradient(90deg, #10b981, #22c55e)';
+                    if (phaseEl) { phaseEl.innerText = 'Installation Complete'; phaseEl.style.color = '#4ade80'; }
+                    if (btn) { btn.innerText = 'Installed'; btn.style.background = 'var(--surface)'; btn.style.color = 'var(--text-muted)'; }
+                    // Clean up any active polling interval for this app
+                    if (_installPollIntervals[appId]) { clearInterval(_installPollIntervals[appId]); delete _installPollIntervals[appId]; }
+                    setTimeout(() => { loadRecipes(); loadPackages(); }, 2000);
+                } else if (job.status === 'failed') {
+                    if (barEl) barEl.style.background = '#ef4444';
+                    if (phaseEl) { phaseEl.innerText = 'Installation Failed'; phaseEl.style.color = '#ef4444'; }
+                    if (btn) { btn.innerText = 'Retry Install'; btn.disabled = false; btn.style.background = '#ef4444'; }
+                    if (_installPollIntervals[appId]) { clearInterval(_installPollIntervals[appId]); delete _installPollIntervals[appId]; }
+                }
+
+                // Also update repair status if visible on package card
+                const statusEl = document.getElementById(`pkg-status-${appId}`);
+                if (statusEl && statusEl.style.display === 'block') {
+                    const pct = job.percent || 0;
+                    const phase = job.phase || 'Working...';
+                    if (job.status === 'completed') {
+                        statusEl.innerHTML = '✅ Repair complete!';
+                        setTimeout(loadPackages, 2000);
+                    } else if (job.status === 'failed') {
+                        statusEl.innerHTML = '❌ Repair failed: ' + (job.phase || 'Unknown error');
+                    } else {
+                        statusEl.innerHTML = `<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#f59e0b; margin-right:6px;"></span>${phase} (${pct}%)`;
+                    }
+                }
+            }
+        };
+
         /* ═══ Sprint 12 — Inpainting Canvas Engine ═══ */
         window._inpaintActive = false;
         window._inpaintTool = 'brush';
@@ -6010,8 +6064,67 @@
                 updateDashboardCards(data);
             } catch(e) {}
         }
-        setInterval(checkSystemStatus, 3000);
-        setInterval(pollDownloads, 1000); // 1-second background poll
+        setInterval(checkSystemStatus, 15000); // Reduced from 3s — SSE provides real-time updates
+        setInterval(pollDownloads, 10000); // Reduced from 1s — SSE download_progress pushes changes
+
+        // ── SSE Consumer Hooks ──────────────────────────────────
+        // Wire SSE events to existing UI update functions.
+        // These fire immediately on server push, while the setIntervals
+        // above serve as a safety-net fallback at reduced frequency.
+
+        window._onSSEDownloadProgress = function(data) {
+            // Update the active-downloads toast strip in the main UI
+            if (data.jobs) {
+                try {
+                    const container = document.getElementById('active-downloads');
+                    if (!container) return;
+                    container.innerHTML = '';
+                    Object.keys(data.jobs).forEach(jobId => {
+                        const j = data.jobs[jobId];
+                        if (j.status === 'completed' || j.status === 'error') {
+                            if (j.status === 'completed' && !knownCompletedJobs.has(jobId)) {
+                                knownCompletedJobs.add(jobId);
+                                setTimeout(loadModels, 2000);
+                            }
+                            return;
+                        }
+                        const progress = j.progress || 0;
+                        const statText = j.status === 'starting' ? 'Initializing...' : `${progress}%`;
+                        container.innerHTML += `
+                            <div class="download-toast">
+                                <div style="font-size:0.85rem; font-weight:600; margin-bottom:5px;">Downloading: ${j.model_name}</div>
+                                <div style="font-size:0.75rem; color:var(--text-muted); display:flex; justify-content:space-between;">
+                                    <span>${j.filename}</span><span>${statText}</span>
+                                </div>
+                                <div class="dl-bar-bg"><div class="dl-bar-fill" style="width: ${progress}%"></div></div>
+                            </div>`;
+                    });
+                } catch(e) {}
+            }
+            // Also update the download status modal if it's visible
+            const modal = document.getElementById('dl-status-modal');
+            if (modal && modal.style.display === 'flex') {
+                updateDownloadStatus();
+            }
+            // Update badge
+            const badge = document.getElementById('ex-dl-badge');
+            if (badge) {
+                if (data.active_count > 0) {
+                    badge.innerText = data.active_count;
+                    badge.style.display = 'block';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        };
+
+        window._onSSEServerStatus = function(data) {
+            // Lightweight push — update running-packages counter in real-time
+            const el = document.getElementById('dash-running');
+            if (el && data.running_packages !== undefined) {
+                el.innerText = data.running_packages;
+            }
+        };
 
         /* ═════════════════════════════════════════════
            SPRINT 9 — Dashboard Intelligence
@@ -6280,6 +6393,18 @@
             panel.classList.toggle('open');
             if(panel.classList.contains('open')) refreshBatchPanel();
         }
+
+        // ── SSE Consumer: Batch Updates ──────────────────────────
+        window._onSSEBatchUpdate = function(data) {
+            // Server pushed a batch job status change — refresh the panel UI
+            refreshBatchPanel();
+            // Show toast notification for completion
+            if (data.status === 'done') {
+                showToast('🎨 Batch job completed');
+            } else if (data.status === 'failed') {
+                showToast('❌ Batch job failed: ' + (data.error || 'Unknown error'));
+            }
+        };
 
         /* ═════════════════════════════════════════════
            SPRINT 9 — Vault Import from Backup

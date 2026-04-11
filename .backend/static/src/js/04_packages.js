@@ -620,3 +620,57 @@
             } catch(e) { alert("Error removing extension"); }
         }
 
+        // ── SSE Consumer: Install Progress ──────────────────────────
+        window._onSSEInstallProgress = function(data) {
+            // data is the full install_jobs.json content keyed by appId
+            if (!data || typeof data !== 'object') return;
+            for (const [appId, job] of Object.entries(data)) {
+                const phaseEl = document.getElementById(`install-phase-${appId}`);
+                const pctEl = document.getElementById(`install-pct-${appId}`);
+                const barEl = document.getElementById(`install-bar-${appId}`);
+                const logEl = document.getElementById(`install-log-${appId}`);
+                const btn = document.getElementById(`install-btn-${appId}`);
+                const progressEl = document.getElementById(`install-progress-${appId}`);
+
+                // Make progress section visible if it exists
+                if (progressEl) progressEl.style.display = 'block';
+
+                if (phaseEl) phaseEl.innerText = job.phase || 'Working...';
+                if (pctEl) pctEl.innerText = `${job.percent || 0}%`;
+                if (barEl) barEl.style.width = `${job.percent || 0}%`;
+                if (logEl && job.log?.length) {
+                    logEl.innerText = job.log.join('\n');
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+
+                if (job.status === 'completed') {
+                    if (barEl) barEl.style.background = 'linear-gradient(90deg, #10b981, #22c55e)';
+                    if (phaseEl) { phaseEl.innerText = 'Installation Complete'; phaseEl.style.color = '#4ade80'; }
+                    if (btn) { btn.innerText = 'Installed'; btn.style.background = 'var(--surface)'; btn.style.color = 'var(--text-muted)'; }
+                    // Clean up any active polling interval for this app
+                    if (_installPollIntervals[appId]) { clearInterval(_installPollIntervals[appId]); delete _installPollIntervals[appId]; }
+                    setTimeout(() => { loadRecipes(); loadPackages(); }, 2000);
+                } else if (job.status === 'failed') {
+                    if (barEl) barEl.style.background = '#ef4444';
+                    if (phaseEl) { phaseEl.innerText = 'Installation Failed'; phaseEl.style.color = '#ef4444'; }
+                    if (btn) { btn.innerText = 'Retry Install'; btn.disabled = false; btn.style.background = '#ef4444'; }
+                    if (_installPollIntervals[appId]) { clearInterval(_installPollIntervals[appId]); delete _installPollIntervals[appId]; }
+                }
+
+                // Also update repair status if visible on package card
+                const statusEl = document.getElementById(`pkg-status-${appId}`);
+                if (statusEl && statusEl.style.display === 'block') {
+                    const pct = job.percent || 0;
+                    const phase = job.phase || 'Working...';
+                    if (job.status === 'completed') {
+                        statusEl.innerHTML = '✅ Repair complete!';
+                        setTimeout(loadPackages, 2000);
+                    } else if (job.status === 'failed') {
+                        statusEl.innerHTML = '❌ Repair failed: ' + (job.phase || 'Unknown error');
+                    } else {
+                        statusEl.innerHTML = `<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#f59e0b; margin-right:6px;"></span>${phase} (${pct}%)`;
+                    }
+                }
+            }
+        };
+
