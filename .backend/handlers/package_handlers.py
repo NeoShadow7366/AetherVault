@@ -365,7 +365,12 @@ class PackageHandlersMixin:
         self.send_json_response({"status": "success", "message": "Package starting...", "url": url, "port": port})
 
     def handle_repair_dependency(self, data):
-        """Auto-repair dependencies: bootstrap pip, upgrade setuptools, install requirements."""
+        """Auto-repair dependencies: bootstrap pip, run install_commands from recipe (incl. CUDA PyTorch).
+
+        Executes the same install_commands pipeline as the original installer,
+        plus git safe.directory, pip bootstrap, and setuptools upgrade pre-steps.
+        Progress is tracked via install_jobs.json for SSE consumer integration.
+        """
         package_id = data.get("package_id")
         if not package_id:
             self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
@@ -382,77 +387,213 @@ class PackageHandlersMixin:
             self.send_json_response({"status": "error", "message": "Python env not found"}, 404)
             return
 
-        logging.info(f"Auto-repairing dependencies for {package_id}...")
-        repair_steps = []
+        # Load install_commands from manifest first, fall back to recipe
+        install_commands = []
+        manifest_path = os.path.join(package_path, "manifest.json")
+        recipe_path = os.path.join(self.root_dir, ".backend", "recipes", f"{package_id}.json")
 
-        try:
-            kwargs = {}
-            if os.name == 'nt':
-                kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 512)
-
-            # Step 1: Add git safe.directory to prevent dubious ownership errors
-            if os.path.isdir(os.path.join(app_path, ".git")):
+        for config_path in [manifest_path, recipe_path]:
+            if os.path.exists(config_path):
                 try:
-                    subprocess.run(
-                        ["git", "config", "--global", "--add", "safe.directory",
-                         app_path.replace("\\", "/")],
-                        timeout=10, capture_output=True
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                    install_commands = config.get("install_commands", [])
+                    if install_commands:
+                        break
+                except (json.JSONDecodeError, OSError):
+                    continue
+
+        logging.info(f"Auto-repairing dependencies for {package_id} ({len(install_commands)} install_commands)...")
+
+        # Write initial progress so SSE picks it up immediately
+        jobs_file = os.path.join(self.root_dir, ".backend", "cache", "install_jobs.json")
+        os.makedirs(os.path.dirname(jobs_file), exist_ok=True)
+
+        def _update_progress(updates: dict) -> None:
+            """Thread-safe progress update to install_jobs.json."""
+            jobs = {}
+            if os.path.exists(jobs_file):
+                try:
+                    with open(jobs_file, 'r', encoding='utf-8') as f:
+                        jobs = json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    pass
+            if package_id not in jobs:
+                jobs[package_id] = {}
+            jobs[package_id].update(updates)
+            with open(jobs_file, 'w', encoding='utf-8') as f:
+                json.dump(jobs, f, indent=2)
+
+        # Run the full repair in a background thread so the API responds immediately
+        def _repair_worker():
+            repair_steps = []
+            total_steps = 3 + len(install_commands)  # git + pip bootstrap + setuptools + N commands
+            current_step = 0
+
+            try:
+                kwargs = {}
+                if os.name == 'nt':
+                    kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 512)
+
+                _update_progress({
+                    "status": "installing",
+                    "phase": "Preparing repair...",
+                    "percent": 0,
+                    "log": ["Starting dependency repair..."]
+                })
+
+                # Step 1: Add git safe.directory
+                current_step += 1
+                if os.path.isdir(os.path.join(app_path, ".git")):
+                    try:
+                        subprocess.run(
+                            ["git", "config", "--global", "--add", "safe.directory",
+                             app_path.replace("\\", "/")],
+                            timeout=10, capture_output=True
+                        )
+                        repair_steps.append("git safe.directory")
+                    except Exception:
+                        pass
+                _update_progress({
+                    "phase": "Git configuration",
+                    "percent": int(current_step / total_steps * 100),
+                    "log": repair_steps.copy() or ["Git config checked"]
+                })
+
+                # Step 2: Bootstrap pip if missing
+                current_step += 1
+                pip_check = subprocess.run(
+                    [python_exe, "-m", "pip", "--version"],
+                    capture_output=True, timeout=15
+                )
+                if pip_check.returncode != 0:
+                    logging.info(f"  pip not found, bootstrapping via ensurepip...")
+                    _update_progress({
+                        "phase": "Bootstrapping pip...",
+                        "percent": int(current_step / total_steps * 100),
+                        "log": ["pip not found — bootstrapping via ensurepip..."]
+                    })
+                    ensurepip_result = subprocess.run(
+                        [python_exe, "-m", "ensurepip", "--upgrade"],
+                        capture_output=True, timeout=120
                     )
-                    repair_steps.append("git safe.directory configured")
-                except Exception:
-                    pass  # Non-critical
+                    if ensurepip_result.returncode == 0:
+                        repair_steps.append("pip bootstrapped")
+                    else:
+                        _update_progress({
+                            "status": "failed",
+                            "phase": "Failed to bootstrap pip",
+                            "log": [ensurepip_result.stderr.decode(errors='replace')[-200:]]
+                        })
+                        return
 
-            # Step 2: Bootstrap pip if missing
-            pip_check = subprocess.run(
-                [python_exe, "-m", "pip", "--version"],
-                capture_output=True, timeout=15
-            )
-            if pip_check.returncode != 0:
-                logging.info(f"  pip not found, bootstrapping via ensurepip...")
-                ensurepip_result = subprocess.run(
-                    [python_exe, "-m", "ensurepip", "--upgrade"],
-                    capture_output=True, timeout=120, **kwargs
+                # Step 3: Upgrade pip + setuptools
+                current_step += 1
+                _update_progress({
+                    "phase": "Upgrading pip + setuptools...",
+                    "percent": int(current_step / total_steps * 100),
+                    "log": ["Upgrading pip and setuptools..."]
+                })
+                subprocess.run(
+                    [python_exe, "-m", "pip", "install", "--upgrade", "pip", "setuptools"],
+                    capture_output=True, timeout=120
                 )
-                if ensurepip_result.returncode == 0:
-                    repair_steps.append("pip bootstrapped via ensurepip")
+                repair_steps.append("pip + setuptools upgraded")
+
+                # Step 4+: Execute install_commands from recipe (includes CUDA PyTorch)
+                if install_commands:
+                    for i, cmd in enumerate(install_commands):
+                        current_step += 1
+                        pct = int(current_step / total_steps * 100)
+
+                        # Convert pip commands to use the venv python
+                        if cmd.startswith("pip "):
+                            parts = cmd.split(" ")[1:]
+                            exec_cmd = [python_exe, "-m", "pip"] + parts
+                        else:
+                            exec_cmd = cmd.split(" ")
+
+                        display_cmd = cmd[:80] + ("..." if len(cmd) > 80 else "")
+                        phase_label = f"Installing ({i+1}/{len(install_commands)}): {display_cmd[:50]}"
+                        logging.info(f"Repair [{package_id}]: Running: {' '.join(exec_cmd)}")
+
+                        _update_progress({
+                            "phase": phase_label,
+                            "percent": pct,
+                            "log": [f"Running: {display_cmd}"]
+                        })
+
+                        # Run with streaming output
+                        proc = subprocess.Popen(
+                            exec_cmd, cwd=app_path,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            **kwargs
+                        )
+                        log_lines = []
+                        for raw_line in proc.stdout:
+                            line = raw_line.decode('utf-8', errors='replace').rstrip()
+                            if line:
+                                log_lines.append(line)
+                                if len(log_lines) > 15:
+                                    log_lines = log_lines[-15:]
+                                _update_progress({
+                                    "phase": phase_label,
+                                    "percent": pct,
+                                    "log": log_lines
+                                })
+                        proc.wait()
+
+                        if proc.returncode == 0:
+                            repair_steps.append(f"✅ {display_cmd[:40]}")
+                        else:
+                            # Non-fatal: pip stderr notices can cause returncode=1
+                            repair_steps.append(f"⚠️ {display_cmd[:40]} (exit {proc.returncode})")
+                            logging.warning(f"Repair command returned {proc.returncode}: {display_cmd}")
                 else:
-                    self.send_json_response({
-                        "status": "error",
-                        "message": "Failed to bootstrap pip: " + ensurepip_result.stderr.decode(errors='replace')[-200:]
-                    }, 500)
-                    return
+                    # Fallback: no install_commands, try requirements.txt directly
+                    current_step += 1
+                    req_candidates = ["requirements.txt", "requirements_versions.txt"]
+                    for candidate in req_candidates:
+                        full_path = os.path.join(app_path, candidate)
+                        if os.path.exists(full_path):
+                            _update_progress({
+                                "phase": f"Installing {candidate}...",
+                                "percent": 80,
+                                "log": [f"pip install -r {candidate}"]
+                            })
+                            proc = subprocess.Popen(
+                                [python_exe, "-m", "pip", "install", "-r", candidate],
+                                cwd=app_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                **kwargs
+                            )
+                            proc.wait()
+                            repair_steps.append(f"installed {candidate}")
+                            break
 
-            # Step 3: Upgrade pip + setuptools (fixes 'no module pkg_resources')
-            subprocess.run(
-                [python_exe, "-m", "pip", "install", "--upgrade", "pip", "setuptools"],
-                capture_output=True, timeout=120, **kwargs
-            )
-            repair_steps.append("pip + setuptools upgraded")
+                # Done!
+                _update_progress({
+                    "status": "completed",
+                    "phase": "Repair Complete",
+                    "percent": 100,
+                    "log": repair_steps
+                })
+                logging.info(f"Repair completed for {package_id}: {' → '.join(repair_steps)}")
 
-            # Step 4: Install requirements
-            req_candidates = ["requirements.txt", "requirements_versions.txt"]
-            req_path = None
-            for candidate in req_candidates:
-                full_path = os.path.join(app_path, candidate)
-                if os.path.exists(full_path):
-                    req_path = full_path
-                    break
+            except Exception as e:
+                logging.error(f"Repair failed for {package_id}: {e}")
+                _update_progress({
+                    "status": "failed",
+                    "phase": f"Repair failed: {str(e)[:80]}",
+                    "log": [f"Error: {str(e)}"]
+                })
 
-            if req_path:
-                subprocess.Popen(
-                    [python_exe, "-m", "pip", "install", "-r", os.path.basename(req_path)],
-                    cwd=app_path, **kwargs
-                )
-                repair_steps.append(f"installing {os.path.basename(req_path)} (background)")
-            else:
-                repair_steps.append("no requirements file found, skipped")
-
-            self.send_json_response({
-                "status": "success",
-                "message": "Repair started: " + " → ".join(repair_steps)
-            })
-        except Exception as e:
-            self.send_json_response({"status": "error", "message": f"Repair failed: {str(e)}"}, 500)
+        # Launch the repair in a background thread
+        t = threading.Thread(target=_repair_worker, name=f"repair-{package_id}", daemon=True)
+        t.start()
+        self.send_json_response({
+            "status": "success",
+            "message": f"Repair started for {package_id} ({len(install_commands)} install commands)"
+        })
 
     def handle_repair_install(self, data):
         """Repair a corrupted package by re-running the install pipeline."""

@@ -35,7 +35,8 @@
                                 ${runBtns}
                                 <button onclick="openLogTerminal('${p.id}', '${p.name}')" style="background: var(--surface-hover); color: white; border: 1px solid var(--border); padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">⌨️ Terminal</button>
                                 <button onclick="openExtensions('${p.id}', '${p.name}')" style="background: #8b5cf6; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;">Plugins</button>
-                                <button onclick="repairPackage('${p.id}')" style="background: #f59e0b; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;" title="Repair corrupted installation">🔧 Repair</button>
+                                <button onclick="repairDependencies('${p.id}')" style="background: #a78bfa; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;" title="Fix missing Python packages (PyTorch CUDA, etc.)">💊 Fix Deps</button>
+                                <button onclick="repairPackage('${p.id}')" style="background: #f59e0b; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;" title="Re-download source code">🔧 Repair</button>
                                 <button onclick="uninstallPackage('${p.id}')" style="background: #ef4444; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: 600;" title="Uninstall">Uninstall</button>
                             </div>
                         </div>
@@ -274,6 +275,32 @@
                             }
                         } catch(_) {}
                     }, 2000);
+                } else {
+                    if(statusEl) statusEl.innerHTML = '❌ ' + response.message;
+                }
+            } catch(e) {
+                alert('Failed to contact server');
+                if(statusEl) statusEl.style.display = 'none';
+            }
+        }
+
+        async function repairDependencies(packageId) {
+            if(!confirm(`Fix dependencies for ${packageId}?\n\nThis will:\n• Bootstrap pip if missing\n• Install CUDA PyTorch\n• Install all requirements\n\nThis may take 10-15 minutes for large packages.`)) return;
+            const statusEl = document.getElementById(`pkg-status-${packageId}`);
+            if(statusEl) {
+                statusEl.style.display = 'block';
+                statusEl.innerHTML = '<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#a78bfa; margin-right:6px;"></span>Starting dependency repair...';
+            }
+            try {
+                const res = await fetch('/api/repair/dependency', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({package_id: packageId})
+                });
+                const response = await res.json();
+                if(response.status === 'success') {
+                    if(statusEl) statusEl.innerHTML = '<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#a78bfa; margin-right:6px;"></span>' + response.message;
+                    // Progress now tracked via install_jobs.json → SSE install_progress events
+                    showToast('Dependency repair started — progress shown on card');
                 } else {
                     if(statusEl) statusEl.innerHTML = '❌ ' + response.message;
                 }
