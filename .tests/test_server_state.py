@@ -1,9 +1,10 @@
-"""Unit tests for server_state module — CachedValue, LRUCache, BatchQueue.
+"""Unit tests for server_state module — CachedValue, LRUCache, BatchQueue, RequestMetrics.
 
 Tests cover:
 - CachedValue: TTL expiration, loader functions, invalidation, thread safety
 - LRUCache: set/get, eviction, TTL expiry, max_size enforcement
 - BatchQueue: add/get, status updates, worker_running flag, trim_history
+- RequestMetrics: record, snapshot, reset, failure tracking
 """
 import os
 import sys
@@ -12,7 +13,7 @@ import threading
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '.backend'))
-from server_state import CachedValue, LRUCache, BatchQueue
+from server_state import CachedValue, LRUCache, BatchQueue, RequestMetrics
 
 
 class TestCachedValue(unittest.TestCase):
@@ -320,6 +321,105 @@ class TestBatchQueue(unittest.TestCase):
         bq.add({"id": "1", "status": "pending"})
         bq.add({"id": "2", "status": "done"})
         self.assertEqual(len(bq), 2)
+
+    def test_count_active(self):
+        """count_active returns only pending + running counts."""
+        bq = BatchQueue()
+        bq.add({"id": "1", "status": "pending"})
+        bq.add({"id": "2", "status": "running"})
+        bq.add({"id": "3", "status": "done"})
+        bq.add({"id": "4", "status": "failed"})
+        self.assertEqual(bq.count_active(), 2)
+
+    def test_is_full(self):
+        """is_full respects max_queue limit including incoming count."""
+        bq = BatchQueue(max_queue=3)
+        bq.add({"id": "1", "status": "pending"})
+        bq.add({"id": "2", "status": "running"})
+        # 2 active + 2 incoming = 4 > 3 → full
+        self.assertTrue(bq.is_full(incoming=2))
+        # 2 active + 1 incoming = 3 → not full (<=)
+        self.assertFalse(bq.is_full(incoming=1))
+
+    def test_claim_next(self):
+        """claim_next atomically finds and marks the next pending job as running."""
+        bq = BatchQueue()
+        bq.add({"id": "a", "status": "running"})
+        bq.add({"id": "b", "status": "pending"})
+        bq.add({"id": "c", "status": "pending"})
+        claimed = bq.claim_next()
+        self.assertEqual(claimed["id"], "b")
+        self.assertEqual(claimed["status"], "running")
+        # Verify it's also updated in the queue
+        all_jobs = bq.get_all()
+        b_job = next(j for j in all_jobs if j["id"] == "b")
+        self.assertEqual(b_job["status"], "running")
+
+    def test_claim_next_empty(self):
+        """claim_next returns None when no pending jobs exist."""
+        bq = BatchQueue()
+        bq.add({"id": "a", "status": "done"})
+        self.assertIsNone(bq.claim_next())
+
+    def test_get_snapshot(self):
+        """get_snapshot returns serializable dicts with truncated prompts."""
+        bq = BatchQueue()
+        bq.add({
+            "id": "snap1",
+            "status": "pending",
+            "payload": {"prompt": "A" * 200},
+            "result": None,
+            "error": None,
+            "created_at": 1000
+        })
+        snap = bq.get_snapshot()
+        self.assertEqual(len(snap), 1)
+        self.assertEqual(snap[0]["id"], "snap1")
+        # Prompt should be truncated to 80 chars
+        self.assertEqual(len(snap[0]["prompt"]), 80)
+        self.assertEqual(snap[0]["created_at"], 1000)
+
+
+class TestRequestMetrics(unittest.TestCase):
+
+    def test_record_and_snapshot(self):
+        """Recording requests shows up in snapshot with avg ms."""
+        m = RequestMetrics()
+        m.record("/api/test", True, 10.0)
+        m.record("/api/test", True, 20.0)
+        snap = m.get_snapshot()
+        self.assertEqual(snap["/api/test"]["success"], 2)
+        self.assertEqual(snap["/api/test"]["fail"], 0)
+        self.assertEqual(snap["/api/test"]["total"], 2)
+        self.assertEqual(snap["/api/test"]["avg_ms"], 15.0)
+
+    def test_failure_tracking(self):
+        """Failed requests increment the fail counter."""
+        m = RequestMetrics()
+        m.record("/api/fail", False, 5.0)
+        m.record("/api/fail", True, 10.0)
+        snap = m.get_snapshot()
+        self.assertEqual(snap["/api/fail"]["success"], 1)
+        self.assertEqual(snap["/api/fail"]["fail"], 1)
+        self.assertEqual(snap["/api/fail"]["total"], 2)
+
+    def test_multiple_endpoints(self):
+        """Different endpoints are tracked independently."""
+        m = RequestMetrics()
+        m.record("/api/a", True, 1.0)
+        m.record("/api/b", True, 2.0)
+        snap = m.get_snapshot()
+        self.assertIn("/api/a", snap)
+        self.assertIn("/api/b", snap)
+        self.assertEqual(snap["/api/a"]["total"], 1)
+        self.assertEqual(snap["/api/b"]["total"], 1)
+
+    def test_reset(self):
+        """reset() clears all tracked metrics."""
+        m = RequestMetrics()
+        m.record("/api/x", True, 1.0)
+        m.reset()
+        self.assertEqual(m.get_snapshot(), {})
 
 
 if __name__ == '__main__':

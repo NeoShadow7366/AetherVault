@@ -1,3 +1,28 @@
+        // S2-15: Global HTML escape utility — prevents XSS in innerHTML templates
+        function escHtml(s) {
+            if (!s) return '';
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        // ═══ Global Toast Notification ═══════════════════════════════
+        // BUG-G1 fix: showToast() was called 28+ times across modules
+        // but never defined. Late-binds to showSettingsToast (09_settings.js)
+        // with a direct DOM fallback for load-order safety.
+        function showToast(msg) {
+            if (typeof showSettingsToast === 'function') {
+                showSettingsToast(msg);
+            } else {
+                const toast = document.getElementById('global-sync-toast');
+                if (toast) {
+                    toast.innerText = msg;
+                    toast.style.display = 'flex';
+                    setTimeout(() => { toast.style.display = 'none'; }, 3000);
+                }
+            }
+        }
+
         // ═══ Unified API Call Wrapper ════════════════════════════════
         class ApiError extends Error {
             constructor(message, status) {
@@ -45,6 +70,19 @@
         window.availableLoras = [];
         window.comfyUploadedImg2Img = null;
         window.comfyUploadedCn = null;
+        
+        // D-1 fix: Shared server status fetch with TTL dedup
+        let _statusCache = null, _statusPromise = null, _statusTime = 0;
+        async function fetchServerStatus() {
+            const now = Date.now();
+            if (_statusCache && now - _statusTime < 2000) return _statusCache;
+            if (_statusPromise) return _statusPromise;
+            _statusPromise = fetch('/api/server_status').then(r => r.json()).catch(() => null);
+            _statusCache = await _statusPromise;
+            _statusTime = Date.now();
+            _statusPromise = null;
+            return _statusCache;
+        }
         
         async function uploadFileToProxy(file) {
             document.getElementById('inf-generate-btn').disabled = true;
@@ -104,6 +142,8 @@
             btn.onclick = launchActiveEngine;
             window.engineLaunching = false;
             window.comfyLaunching = false;
+            // I-11 fix: Clear stale ComfyUI img2img reference when switching engines
+            window.comfyUploadedImg2Img = null;
             
             // Apply engine-specific UI visibility
             applyEngineVisibility(engine);
@@ -245,6 +285,10 @@
             let _isPanning = false;
             let _startX = 0;
             let _startY = 0;
+            // I-7 fix: Expose zoom/pan for inpaint coordinate correction
+            window._canvasZoom = 1.0;
+            window._canvasPanX = 0;
+            window._canvasPanY = 0;
 
             document.addEventListener('DOMContentLoaded', () => {
                 const container = document.getElementById('inf-canvas-container');
@@ -259,7 +303,10 @@
                     if(img.style.display === 'none') return;
                     e.preventDefault();
                     _zoom = Math.min(8, Math.max(0.2, _zoom * (e.deltaY < 0 ? 1.12 : 0.9)));
+                    window._canvasZoom = _zoom;
                     updateTransform();
+                    // I-7 fix: Realign inpaint canvas overlay after zoom
+                    if (typeof resizeInpaintCanvas === 'function') resizeInpaintCanvas();
                 }, { passive: false });
 
                 container.addEventListener('mousedown', (e) => {
@@ -274,10 +321,13 @@
                     if(!_isPanning) return;
                     _panX = (e.clientX - _startX) / _zoom;
                     _panY = (e.clientY - _startY) / _zoom;
+                    window._canvasPanX = _panX;
+                    window._canvasPanY = _panY;
                     updateTransform();
                 });
 
                 window.addEventListener('mouseup', () => {
+                    if (_isPanning && typeof resizeInpaintCanvas === 'function') resizeInpaintCanvas();
                     _isPanning = false;
                     container.style.cursor = 'default';
                 });

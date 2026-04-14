@@ -124,10 +124,11 @@ class BatchQueue:
     with a properly encapsulated container.
     """
 
-    def __init__(self, max_history: int = 50):
+    def __init__(self, max_history: int = 50, max_queue: int = 200):
         self._lock = threading.Lock()
         self._queue: list = []
         self._max_history = max_history
+        self._max_queue = max_queue
         self._worker_running = False
 
     def add(self, item: dict) -> None:
@@ -170,6 +171,39 @@ class BatchQueue:
                 done = done[-self._max_history:]
             self._queue = active + done
 
+    def count_active(self) -> int:
+        """Count pending + running jobs (for queue saturation checks)."""
+        with self._lock:
+            return sum(1 for j in self._queue if j.get("status") in ("pending", "running"))
+
+    def is_full(self, incoming: int = 0) -> bool:
+        """Check if adding `incoming` items would exceed the max queue limit."""
+        return self.count_active() + incoming > self._max_queue
+
+    def claim_next(self) -> dict | None:
+        """Atomically find and claim the next pending job. Returns None if empty."""
+        with self._lock:
+            for item in self._queue:
+                if item.get("status") == "pending":
+                    item["status"] = "running"
+                    return item
+            return None
+
+    def get_snapshot(self) -> list:
+        """Return a serializable snapshot for the status endpoint."""
+        with self._lock:
+            return [
+                {
+                    "id": j["id"],
+                    "status": j["status"],
+                    "prompt": (j.get("payload") or {}).get("prompt", "")[:80],
+                    "result": j.get("result"),
+                    "error": j.get("error"),
+                    "created_at": j.get("created_at", 0)
+                }
+                for j in self._queue
+            ]
+
     @property
     def worker_running(self) -> bool:
         with self._lock:
@@ -188,3 +222,47 @@ class BatchQueue:
     def __len__(self):
         with self._lock:
             return len(self._queue)
+
+
+class RequestMetrics:
+    """Thread-safe per-endpoint request metrics.
+
+    Tracks success/failure counts and cumulative latency for each API endpoint.
+    GIL-safe for single dict key updates; uses a lock only for snapshot reads.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._metrics: dict = {}  # {endpoint: {"success": N, "fail": N, "total_ms": float}}
+
+    def record(self, endpoint: str, success: bool, duration_ms: float) -> None:
+        """Record a single request outcome."""
+        with self._lock:
+            if endpoint not in self._metrics:
+                self._metrics[endpoint] = {"success": 0, "fail": 0, "total_ms": 0.0}
+            entry = self._metrics[endpoint]
+            if success:
+                entry["success"] += 1
+            else:
+                entry["fail"] += 1
+            entry["total_ms"] += duration_ms
+
+    def get_snapshot(self) -> dict:
+        """Return a copy of all metrics with computed averages."""
+        with self._lock:
+            result = {}
+            for ep, m in self._metrics.items():
+                total = m["success"] + m["fail"]
+                result[ep] = {
+                    "success": m["success"],
+                    "fail": m["fail"],
+                    "total": total,
+                    "avg_ms": round(m["total_ms"] / total, 2) if total > 0 else 0
+                }
+            return result
+
+    def reset(self) -> None:
+        """Clear all metrics."""
+        with self._lock:
+            self._metrics.clear()
+

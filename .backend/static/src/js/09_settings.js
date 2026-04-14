@@ -11,7 +11,12 @@
                 const accentEl = document.getElementById('set-accent');
                 if(accentEl && data.accent) {
                     accentEl.value = data.accent;
-                    document.body.style.setProperty('--primary', data.accent);
+                    // S-1 fix: Validate CSS color before applying
+                    const testEl = document.createElement('span');
+                    testEl.style.color = data.accent;
+                    if (testEl.style.color) {
+                        document.body.style.setProperty('--primary', data.accent);
+                    }
                 }
                 const updEl = document.getElementById('set-updates');
                 if(updEl && data.auto_updates !== undefined) updEl.value = String(data.auto_updates);

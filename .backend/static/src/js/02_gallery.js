@@ -33,7 +33,7 @@
                 if(bar && tags.length > 0) {
                     bar.style.display = 'flex';
                     bar.innerHTML = `<span class="tag-pill${_galleryActiveTag===''?' active':''}" onclick="loadGalleryByTag('')">All</span>` +
-                        tags.map(t => `<span class="tag-pill${_galleryActiveTag===t?' active':''}" onclick="loadGalleryByTag('${t}')">${t}</span>`).join('');
+                        tags.map(t => `<span class="tag-pill${_galleryActiveTag===t?' active':''}" onclick="loadGalleryByTag(decodeURIComponent('${encodeURIComponent(t)}'))">${escHtml(t)}</span>`).join('');
                 } else if(bar) {
                     bar.style.display = 'none';
                 }
@@ -90,12 +90,12 @@
             grid.innerHTML = items.map(g => `
                 <div class="card" onclick="openGalleryItem(${g.id})">
                     <div class="card-img-container" style="padding-top:100%;">
-                        <img class="card-img" src="${g.image_path}" loading="lazy">
+                        <img class="card-img" src="${escHtml(g.image_path)}" loading="lazy">
                     </div>
                     <div class="card-banner" style="background:var(--surface);">
-                        <h3 style="font-size:0.85rem; height:1.2rem; overflow:hidden;">${g.prompt || 'Untitled'}</h3>
+                        <h3 style="font-size:0.85rem; height:1.2rem; overflow:hidden;">${escHtml(g.prompt) || 'Untitled'}</h3>
                         <div class="card-meta-row">
-                            <span>${g.model || ''}</span>
+                            <span>${escHtml(g.model) || ''}</span>
                             <span>${new Date(g.created_at).toLocaleDateString()}</span>
                         </div>
                         <div class="gallery-star-bar" style="pointer-events:none;">
@@ -202,37 +202,25 @@
             const g = _galleryData.find(x => x.id === id);
             if(!g) return;
             
-            // Rehydrate studio
-            if(g.prompt) {
-                const promptEl = document.getElementById('inf-prompt');
-                if(promptEl) promptEl.value = g.prompt;
-            }
-            if(g.negative_prompt) {
-                const negEl = document.getElementById('inf-negative');
-                if(negEl) negEl.value = g.negative_prompt;
-            }
-            if(g.model_name) {
-                const modEl = document.getElementById('inf-model');
-                if(modEl) modEl.value = g.model_name;
-            }
-            if(g.loras) {
-                const lorasEl = document.getElementById('inf-loras');
-                if(lorasEl) lorasEl.value = g.loras;
-            }
-            
-            try {
-                const params = JSON.parse(g.parameters || '{}');
-                if(params.width) document.getElementById('inf-width').value = params.width;
-                if(params.height) document.getElementById('inf-height').value = params.height;
-                if(params.steps) document.getElementById('inf-steps').value = params.steps;
-                if(params.cfg) document.getElementById('inf-cfg').value = params.cfg;
-                if(params.sampler_name) document.getElementById('inf-sampler').value = params.sampler_name;
-                if(params.seed !== undefined) document.getElementById('inf-seed').value = params.seed;
-            } catch(e) {}
+            // Rehydrate studio — use actual DB column names (not negative_prompt/model_name)
+            const setVal = (elId, val) => {
+                const el = document.getElementById(elId);
+                if(el && val !== undefined && val !== null && val !== '') el.value = val;
+            };
+
+            setVal('inf-prompt', g.prompt);
+            setVal('inf-negative', g.negative);
+            setVal('inf-model', g.model);
+            setVal('inf-sampler', g.sampler);
+            setVal('inf-steps', g.steps);
+            setVal('inf-cfg', g.cfg);
+            setVal('inf-seed', g.seed);
+            setVal('inf-width', g.width);
+            setVal('inf-height', g.height);
             
             document.getElementById('gallery-lightbox').style.display = 'none';
             switchTab('inference', document.querySelector('.nav-item[onclick*="inference"]'));
-            showSettingsToast('⚡ Sent to Studio!');
+            showToast('⚡ Sent to Studio!');
         }
 
         async function deleteGenerationFromGallery() {
@@ -271,12 +259,12 @@
             _abSlotA = { ..._glCurrentItem };
             _abSlotB = null;
             _abSelectMode = 'b'; // Next gallery click goes to B
+            window._abSelectMode = _abSelectMode;
 
             // Close gallery lightbox, open A/B
             document.getElementById('gallery-lightbox').style.display = 'none';
             const overlay = document.getElementById('ab-comparison');
             overlay.classList.add('open');
-            window._abSelectMode = 'b';
 
             // Render pane A
             renderABPane('a', _abSlotA);
@@ -297,7 +285,7 @@
             img.src = item.image_path;
             img.style.display = 'block';
             empty.style.display = 'none';
-            meta.innerHTML = `<b>Model:</b> ${item.model || '—'} · <b>Steps:</b> ${item.steps || '—'} · <b>CFG:</b> ${item.cfg || '—'} · <b>Seed:</b> ${item.seed || '—'}<br><b>Prompt:</b> ${(item.prompt || '').substring(0, 120)}${(item.prompt || '').length > 120 ? '...' : ''}`;
+            meta.innerHTML = `<b>Model:</b> ${escHtml(item.model) || '—'} · <b>Steps:</b> ${item.steps || '—'} · <b>CFG:</b> ${item.cfg || '—'} · <b>Seed:</b> ${item.seed || '—'}<br><b>Prompt:</b> ${escHtml((item.prompt || '').substring(0, 120))}${(item.prompt || '').length > 120 ? '...' : ''}`;
         }
 
         function closeABComparison() {

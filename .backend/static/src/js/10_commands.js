@@ -91,7 +91,7 @@
                 e.preventDefault();
                 _cmdActiveIndex = Math.max(_cmdActiveIndex - 1, 0);
                 renderCommandList();
-            } else if(e.key === 'Enter') {
+            } else if(e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
                 executeCommand(_cmdActiveIndex);
             } else if(e.key === 'Escape') {

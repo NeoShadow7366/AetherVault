@@ -160,11 +160,18 @@ class VaultHandlersMixin:
             self.send_json_response({"status": "success", "message": "No packages installed."})
             return
 
+        # S2-9: Depth-limited walk to prevent hangs on recursive junction cycles
+        _MAX_DEPTH = 10
         for pkg_name in os.listdir(packages_dir):
             pkg_path = os.path.join(packages_dir, pkg_name)
             if not os.path.isdir(pkg_path):
                 continue
+            pkg_depth = pkg_path.count(os.sep)
             for root, dirs, _ in os.walk(pkg_path):
+                current_depth = root.count(os.sep) - pkg_depth
+                if current_depth >= _MAX_DEPTH:
+                    dirs.clear()  # Stop descending
+                    continue
                 for d in dirs:
                     full = os.path.join(root, d)
                     if os.path.islink(full) or (os.name == 'nt' and os.path.isdir(full)):
@@ -257,28 +264,47 @@ class VaultHandlersMixin:
                 })
                 return
 
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
-                zf.writestr('vault_manifest.json', json.dumps(manifest, indent=2, default=str))
-                for entry in manifest:
-                    fn = entry.get('filename', '')
-                    cat = entry.get('vault_category', '')
-                    filepath = os.path.join(self.root_dir, 'Global_Vault', cat, fn)
-                    if os.path.exists(filepath):
-                        arcname = f"{cat}/{fn}"
-                        zf.write(filepath, arcname)
+            # S2-6: Stream ZIP via temp file instead of buffering entire archive in RAM.
+            # This prevents OOM for large vault exports (e.g., 50GB of checkpoints).
+            import tempfile
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix='.zip', dir=os.path.join(self.root_dir, '.backend', 'cache'))
+            try:
+                os.close(tmp_fd)  # Close fd, zipfile will open by path
+                with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                    zf.writestr('vault_manifest.json', json.dumps(manifest, indent=2, default=str))
+                    for entry in manifest:
+                        fn = entry.get('filename', '')
+                        cat = entry.get('vault_category', '')
+                        filepath = os.path.join(self.root_dir, 'Global_Vault', cat, fn)
+                        if os.path.exists(filepath):
+                            arcname = f"{cat}/{fn}"
+                            zf.write(filepath, arcname)
 
-            zip_bytes = buf.getvalue()
-            ts = time.strftime('%Y%m%d_%H%M%S')
-            filename = f"vault_export_{ts}.zip"
+                zip_size = os.path.getsize(tmp_path)
+                ts = time.strftime('%Y%m%d_%H%M%S')
+                filename = f"vault_export_{ts}.zip"
 
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/zip')
-            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
-            self.send_header('Content-Length', str(len(zip_bytes)))
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(zip_bytes)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/zip')
+                self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+                self.send_header('Content-Length', str(zip_size))
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+
+                # Stream from disk in 64KB chunks instead of loading entire ZIP into RAM
+                _CHUNK = 64 * 1024
+                with open(tmp_path, 'rb') as zf:
+                    while True:
+                        chunk = zf.read(_CHUNK)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            finally:
+                # Always clean up temp file
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
         except Exception as e:
             self.send_json_response({"status": "error", "message": str(e)}, 500)
 
@@ -307,13 +333,24 @@ class VaultHandlersMixin:
         failed = []
         filenames_to_remove = []
 
+        vault_base = os.path.abspath(os.path.join(self.root_dir, "Global_Vault"))
+
         for m in models:
             filename = m.get("filename")
             category = m.get("category")
             if not filename or not category:
                 failed.append({"filename": filename, "reason": "Missing filename or category"})
                 continue
+
+            # S2-17: Path traversal guard — ensure resolved path stays within Global_Vault
+            if ".." in filename or ".." in category:
+                failed.append({"filename": filename, "reason": "Invalid path component"})
+                continue
             filepath = os.path.join(self.root_dir, "Global_Vault", category, filename)
+            if not os.path.abspath(filepath).startswith(vault_base):
+                failed.append({"filename": filename, "reason": "Path traversal blocked"})
+                continue
+
             if os.path.exists(filepath):
                 try:
                     os.remove(filepath)
@@ -344,6 +381,13 @@ class VaultHandlersMixin:
         if not target_path or not os.path.exists(target_path) or not os.path.isdir(target_path):
             self.send_json_response({"status": "error", "message": "Invalid directory provided"}, 400)
             return
+
+        # S2-13: Validate the resolved path is a real directory (not a symlink to sensitive areas)
+        resolved = os.path.realpath(target_path)
+        if not os.path.isdir(resolved):
+            self.send_json_response({"status": "error", "message": "Resolved path is not a directory"}, 400)
+            return
+
         try:
             folder_name = os.path.basename(os.path.abspath(target_path)).replace(" ", "_")
             if not folder_name:
@@ -351,7 +395,7 @@ class VaultHandlersMixin:
             vault_dir = os.path.join(self.root_dir, "Global_Vault", f"External_{folder_name}")
             os.makedirs(vault_dir, exist_ok=True)
             try:
-                create_safe_directory_link(target_path, os.path.join(vault_dir, "Models"))
+                create_safe_directory_link(resolved, os.path.join(vault_dir, "Models"))
                 self.send_json_response({"status": "success"})
             except Exception as e:
                 self.send_json_response({"status": "error", "message": str(e)}, 500)
@@ -396,3 +440,237 @@ class VaultHandlersMixin:
         except Exception as e:
             logging.error(f"Failed to remove favorite: {e}")
             self.send_json_response({"error": str(e)}, 500)
+
+    # ══════════════════════════════════════════════════════
+    #  MULTI-PATH SCANNING & MIGRATION
+    # ══════════════════════════════════════════════════════
+
+    def _get_crawler(self):
+        """Get or create the shared VaultCrawler instance."""
+        server_mod = sys.modules.get('server', None)
+        if server_mod and hasattr(server_mod, '_vault_crawler'):
+            return server_mod._vault_crawler
+        # Fallback: create one
+        from vault_crawler import VaultCrawler
+        crawler = VaultCrawler(self.root_dir)
+        if server_mod:
+            server_mod._vault_crawler = crawler
+        return crawler
+
+    def handle_scan_external(self, data):
+        """POST /api/vault/scan_external — Discover models from external paths.
+        Body: {"source": "stability_matrix"} or {} for all sources."""
+        import threading
+        source = data.get("source")
+        crawler = self._get_crawler()
+
+        if crawler.scan_progress.get("active"):
+            self.send_json_response({"status": "busy", "message": "A scan is already in progress."}, 409)
+            return
+
+        def _run():
+            crawler.discover_external(source_name=source)
+        
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        self.send_json_response({"status": "started", "source": source or "all"})
+
+    def handle_hash_library(self, data):
+        """POST /api/vault/hash_library — Hash all unhashed models.
+        Body: {"source": "external:stability_matrix"} or {} for all."""
+        import threading
+        source = data.get("source")
+        crawler = self._get_crawler()
+
+        if crawler.scan_progress.get("active"):
+            self.send_json_response({"status": "busy", "message": "A scan is already in progress."}, 409)
+            return
+
+        def _run():
+            result = crawler.hash_library(source_path=source)
+            logging.info(f"Hash library complete: {result}")
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        self.send_json_response({"status": "started", "source": source or "all"})
+
+    def handle_hash_single(self, data):
+        """POST /api/vault/hash_single — Hash one model by DB id.
+        Body: {"model_id": 42}"""
+        model_id = data.get("model_id")
+        if not model_id:
+            self.send_json_response({"error": "model_id required"}, 400)
+            return
+        
+        crawler = self._get_crawler()
+        result = crawler.hash_single_model(int(model_id))
+        self.send_json_response(result)
+
+    def handle_cancel_scan(self, data):
+        """POST /api/vault/cancel_scan — Cancel the active scan/hash."""
+        crawler = self._get_crawler()
+        crawler.cancel_scan()
+        self.send_json_response({"status": "cancelled"})
+
+    def handle_scan_progress(self):
+        """GET /api/vault/scan_progress — Returns current scan status."""
+        crawler = self._get_crawler()
+        self.send_json_response(crawler.scan_progress)
+
+    def handle_external_sources(self):
+        """GET /api/vault/external_sources — List available external model paths."""
+        crawler = self._get_crawler()
+        sources = crawler.get_external_paths()
+        self.send_json_response({"sources": sources})
+
+    def handle_migrate_models(self, data):
+        """POST /api/vault/migrate — Move models from Global_Vault to external path.
+        Body: {
+            "filenames": ["model1.safetensors"],
+            "destination_base": "I:\\StabilityMatrix-win-x64\\Data\\Models\\",
+            "destination_subdir": "StableDiffusion/",
+            "destination_source": "external:stability_matrix",
+            "source_category": "checkpoints"
+        }
+        """
+        import threading
+        filenames = data.get("filenames", [])
+        dest_base = data.get("destination_base", "")
+        dest_subdir = data.get("destination_subdir", "")
+        dest_source = data.get("destination_source", "")
+        source_category = data.get("source_category", "")
+
+        if not filenames or not dest_base:
+            self.send_json_response({"error": "filenames and destination_base required"}, 400)
+            return
+
+        dest_dir = os.path.join(dest_base, dest_subdir) if dest_subdir else dest_base
+
+        # Security: no traversal
+        if ".." in dest_dir or ".." in dest_base:
+            self.send_json_response({"error": "Invalid path"}, 403)
+            return
+
+        if not os.path.isdir(dest_dir):
+            self.send_json_response({"error": f"Destination does not exist: {dest_dir}"}, 400)
+            return
+
+        def _migrate():
+            from server import _get_db
+            db = _get_db()
+            results = []
+            
+            for fname in filenames:
+                result = {"filename": fname, "status": "pending"}
+                src_path = os.path.join(self.root_dir, "Global_Vault", source_category, fname)
+                
+                if not os.path.exists(src_path):
+                    result["status"] = "error"
+                    result["message"] = "Source file not found"
+                    results.append(result)
+                    continue
+
+                dst_path = os.path.join(dest_dir, fname)
+                
+                # Handle duplicate filename at destination
+                if os.path.exists(dst_path):
+                    # Check if same file by size
+                    if os.path.getsize(src_path) == os.path.getsize(dst_path):
+                        # Same size — likely same file, skip copy but still update DB
+                        logging.info(f"File {fname} already exists at destination (same size), skipping copy.")
+                        try:
+                            model = db.get_model_by_filename(fname)
+                            if model and model.get("file_hash"):
+                                db.update_model_source(model["file_hash"], dest_source,
+                                                      self._map_vault_category(dest_subdir))
+                            # Delete source
+                            os.remove(src_path)
+                            result["status"] = "migrated"
+                            result["message"] = "Already at destination, source removed"
+                        except Exception as e:
+                            result["status"] = "error"
+                            result["message"] = str(e)
+                        results.append(result)
+                        continue
+                    else:
+                        # Different file with same name — rename
+                        base, ext = os.path.splitext(fname)
+                        counter = 1
+                        while os.path.exists(dst_path):
+                            dst_path = os.path.join(dest_dir, f"{base}_{counter}{ext}")
+                            counter += 1
+                        logging.info(f"Renamed to avoid conflict: {os.path.basename(dst_path)}")
+
+                try:
+                    # Copy
+                    logging.info(f"Migrating {fname} → {dst_path}")
+                    shutil.copy2(src_path, dst_path)
+                    
+                    # Verify by size (hash verification is expensive, size is sufficient for copy integrity)
+                    src_size = os.path.getsize(src_path)
+                    dst_size = os.path.getsize(dst_path)
+                    
+                    if src_size != dst_size:
+                        result["status"] = "error"
+                        result["message"] = "Size mismatch after copy — source NOT deleted"
+                        # Clean up failed copy
+                        try:
+                            os.remove(dst_path)
+                        except OSError:
+                            pass
+                        results.append(result)
+                        continue
+                    
+                    # Update DB
+                    model = db.get_model_by_filename(fname)
+                    if model and model.get("file_hash"):
+                        new_cat = self._map_vault_category(dest_subdir)
+                        db.update_model_source(model["file_hash"], dest_source, new_cat)
+                    
+                    # Delete original only after verified copy
+                    os.remove(src_path)
+                    result["status"] = "migrated"
+                    logging.info(f"Successfully migrated {fname}")
+                    
+                except Exception as e:
+                    result["status"] = "error"
+                    result["message"] = str(e)
+                    logging.error(f"Migration failed for {fname}: {e}")
+                
+                results.append(result)
+
+                # Emit SSE progress
+                try:
+                    server_mod = sys.modules.get('server', None)
+                    if server_mod and hasattr(server_mod, '_sse_emit'):
+                        server_mod._sse_emit({
+                            "type": "migration_progress",
+                            "filename": fname,
+                            "status": result["status"],
+                            "done": len(results),
+                            "total": len(filenames)
+                        })
+                except Exception:
+                    pass
+
+            logging.info(f"Migration complete: {sum(1 for r in results if r['status'] == 'migrated')}/{len(results)} succeeded")
+
+        t = threading.Thread(target=_migrate, daemon=True)
+        t.start()
+        self.send_json_response({"status": "started", "count": len(filenames)})
+
+    @staticmethod
+    def _map_vault_category(subdir: str) -> str:
+        """Map a destination subdirectory name to a vault category."""
+        subdir_clean = subdir.rstrip("/").rstrip("\\").lower()
+        mapping = {
+            "stablediffusion": "checkpoints",
+            "lora": "loras",
+            "vae": "vaes",
+            "controlnet": "controlnet",
+            "diffusionmodels": "unet",
+            "textencoders": "clip",
+            "embeddings": "embeddings",
+        }
+        return mapping.get(subdir_clean, subdir_clean)
+

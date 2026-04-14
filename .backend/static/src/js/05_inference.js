@@ -184,9 +184,14 @@
         function getCanvasPos(e) {
             const canvas = document.getElementById('inpaint-canvas');
             const rect = canvas.getBoundingClientRect();
+            // I-7 fix: Scale from display coordinates to canvas internal coordinates
+            // getBoundingClientRect already reflects CSS transforms, but the canvas
+            // internal resolution (canvas.width) may differ from display size (rect.width)
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
             return {
-                x: e.clientX - rect.left,
-                y: e.clientY - rect.top
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
             };
         }
 
@@ -365,6 +370,10 @@
                 function onUp() {
                     document.removeEventListener('mousemove', onMove);
                     document.removeEventListener('mouseup', onUp);
+                    // I-8 fix: Convert px → % so zones survive window resize
+                    const finalRect = editor.getBoundingClientRect();
+                    zone.style.left = (zone.offsetLeft / finalRect.width * 100) + '%';
+                    zone.style.top = (zone.offsetTop / finalRect.height * 100) + '%';
                 }
                 document.addEventListener('mousemove', onMove);
                 document.addEventListener('mouseup', onUp);
@@ -386,6 +395,10 @@
                 function onUp() {
                     document.removeEventListener('mousemove', onMove);
                     document.removeEventListener('mouseup', onUp);
+                    // I-8 fix: Convert px → % so zones survive window resize
+                    const finalRect = editor.getBoundingClientRect();
+                    zone.style.width = (zone.offsetWidth / finalRect.width * 100) + '%';
+                    zone.style.height = (zone.offsetHeight / finalRect.height * 100) + '%';
                 }
                 document.addEventListener('mousemove', onMove);
                 document.addEventListener('mouseup', onUp);
@@ -499,7 +512,7 @@
                     await fetch('/api/generate/batch', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(combo)
+                        body: JSON.stringify({ payload: combo })
                     });
                     queued++;
                     statusEl.textContent = `Queued ${queued} / ${combos.length}...`;
@@ -672,10 +685,10 @@
                 return;
             }
             
-            repopulateUI(promptObj);
+            repopulateFromComfyWorkflow(promptObj);
         }
 
-        function repopulateUI(promptObj) {
+        async function repopulateFromComfyWorkflow(promptObj) {
             let cModel="", cSampler="", cScheduler="", cSteps=20, cCfg=7.0, cWidth=1024, cHeight=1024, cSeed=-1, cPrompt="", cNeg="";
             let cVae="none", cRefiner="none", cRefSteps=10, cDenoise=1.0;
             let cHiresEnable = false, cHiresUpType = "latent", cHiresSteps = 10, cHiresFactor = 1.5, cHiresDenoise = 0.4;
@@ -758,6 +771,14 @@
             if(canvasImg2) canvasImg2.style.transform = 'scale(1)';
             
             // Restore LoRAs natively
+            // I-6 fix: Ensure availableLoras is populated before restoring
+            if (loras.length > 0 && (!window.availableLoras || window.availableLoras.length === 0)) {
+                try {
+                    const lr = await fetch('/api/models?limit=5000');
+                    const ld = await lr.json();
+                    if (ld.models) window.availableLoras = ld.models.filter(m => m.vault_category === 'loras');
+                } catch(_) {}
+            }
             const lCont = document.getElementById('inf-lora-container');
             lCont.innerHTML = '';
             loras.forEach(l => {

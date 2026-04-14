@@ -26,8 +26,20 @@ class Downloader:
             return {}
 
     def _write_status(self, data):
-        with open(self.status_file, "w") as f:
-            json.dump(data, f)
+        """S2-5: Atomic write — prevents JSON corruption if process crashes mid-write."""
+        import tempfile
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, suffix='.tmp')
+        try:
+            with os.fdopen(tmp_fd, 'w') as f:
+                json.dump(data, f)
+            os.replace(tmp_path, self.status_file)  # Atomic on NTFS and POSIX
+        except Exception:
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def update_job(self, job_id, update_dict):
         status = self._read_status()

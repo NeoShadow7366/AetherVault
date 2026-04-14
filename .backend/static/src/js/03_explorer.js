@@ -60,7 +60,8 @@
             const idMatch = q.match(/models\/(\d+)/) || q.match(/^(\d+)$/);
             if(idMatch) {
                 isExactId = true;
-                url = new URL(`https://civitai.com/api/v1/models/${idMatch[1]}`);
+                url = new URL(window.location.origin + '/api/civitai_search');
+                url.searchParams.append('exact_id', idMatch[1]);
             } else if (q) {
                 url = new URL(window.location.origin + '/api/civitai_search');
                 url.searchParams.append('query', q);
@@ -68,8 +69,8 @@
                 if(type) url.searchParams.append('type', type);
                 if(base) url.searchParams.append('base', base);
             } else {
-                url = new URL('https://civitai.com/api/v1/models');
-                url.searchParams.append('limit', '40');
+                url = new URL(window.location.origin + '/api/civitai_search');
+                url.searchParams.append('browse', 'true');
                 let apiSort = sort;
                 if (sort === 'Size High' || sort === 'Size Low') apiSort = 'Highest Rated';
                 if (apiSort !== 'Search Match') {
@@ -125,7 +126,8 @@
             const hideInstalled = document.getElementById('ex-installed').checked;
             const favs = window.appFavorites || {};
             activeModels = {};
-            
+            const htmlParts = [];
+
             items.forEach(model => {
                 if (hideInstalled && installedHashes.has(model.name)) return;
                 if (window.onlyNsfw && !model.nsfw) return;
@@ -138,6 +140,8 @@
                 }
 
                 activeModels[model.id] = model;
+                // E-6 fix: Stamp source so download uses correct params later
+                if (!model._source) model._source = document.getElementById('ex-source').value;
                 window.cardState[model.id] = 0;
                 
                 let bgHtml = '';
@@ -182,7 +186,7 @@
                     `;
                 }
                 
-                grid.innerHTML += `
+                htmlParts.push(`
                     <div class="card" onclick="openLightbox(${model.id})">
                         <div class="card-tags">
                             <span class="badge type">${model.type || 'Model'}</span>
@@ -194,15 +198,17 @@
                             ${carouselBtns}
                         </div>
                         <div class="card-banner">
-                            <h3>${model.name}</h3>
+                            <h3>${escHtml(model.name)}</h3>
                             <div class="card-meta-row">
-                                <span>${creatorName}</span>
+                                <span>${escHtml(creatorName)}</span>
                                 <span>⬇ ${dl}</span>
                             </div>
                         </div>
                     </div>
-                `;
+                `);
             });
+
+            grid.innerHTML = htmlParts.join('');
         }
 
         async function toggleFavorite(modelId) {
@@ -228,7 +234,14 @@
                     });
                 } catch(e) { console.warn('Failed to add favorite:', e); }
             }
-            loadExplorer();
+            // E-4 fix: Update star in-place instead of rebuilding entire grid (preserves scroll)
+            const card = document.querySelector(`.card[onclick*="openLightbox(${modelId})"]`);
+            if (card) {
+                const starBtn = card.querySelector('.fav-btn');
+                if (starBtn) {
+                    starBtn.style.color = window.appFavorites[modelId] ? '#fbbf24' : 'rgba(255,255,255,0.4)';
+                }
+            }
         }
 
         function cycleImage(modelId, step) {
@@ -305,8 +318,8 @@
                 const tagName = typeof t === 'string' ? t : t.name;
                 tagsCont.innerHTML += `
                     <span class="badge" style="background:var(--surface-hover); display:flex; align-items:center; gap:5px;">
-                        ${tagName}
-                        ${window.isVaultMode ? `<button onclick="removeVaultTag('${tagName}')" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:0.8rem; padding:0; margin-left:4px;">&times;</button>` : ''}
+                        ${escHtml(tagName)}
+                        ${window.isVaultMode ? `<button onclick="removeVaultTag('${escHtml(tagName)}')" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:0.8rem; padding:0; margin-left:4px;">&times;</button>` : ''}
                     </span>
                 `;
             });
@@ -415,8 +428,8 @@
                 if(img.meta && Object.keys(img.meta).length > 0) {
                     metaCont.style.display = 'block';
                     let h = '';
-                    if(img.meta.prompt) h += `<div style="margin-bottom:8px;"><strong>Prompt:</strong> ${img.meta.prompt}</div>`;
-                    if(img.meta.negativePrompt) h += `<div style="margin-bottom:8px;"><strong>Negative:</strong> ${img.meta.negativePrompt}</div>`;
+                    if(img.meta.prompt) h += `<div style="margin-bottom:8px;"><strong>Prompt:</strong> ${escHtml(img.meta.prompt)}</div>`;
+                    if(img.meta.negativePrompt) h += `<div style="margin-bottom:8px;"><strong>Negative:</strong> ${escHtml(img.meta.negativePrompt)}</div>`;
                     let pills = '';
                     if(img.meta.sampler) pills += `<span class="meta-pill">Sampler: ${img.meta.sampler}</span>`;
                     if(img.meta.cfgScale) pills += `<span class="meta-pill">CFG: ${img.meta.cfgScale}</span>`;
@@ -528,7 +541,8 @@
             }
 
             const destFolder = `Global_Vault/${tier}`;
-            const source = document.getElementById('ex-source').value;
+            // E-6 fix: Read source from model instead of dropdown (survives tab switch)
+            const source = m._source || document.getElementById('ex-source').value;
             let dlUrl = mainFile.downloadUrl;
             if (source === 'civitai') {
                 dlUrl += "?type=Model&format=SafeTensor";
@@ -678,6 +692,8 @@
                 return;
             }
 
+            const htmlParts = [];
+
             models.forEach(m => {
                 // Determine model object (from standard or search API)
                 const isSearchRes = (m.model !== undefined && m.score !== undefined);
@@ -745,7 +761,7 @@
                     ? `<video class="card-img" src="${videoSrc}" autoplay loop muted playsinline></video>`
                     : `<img class="card-img" src="${imgSrc}" onerror="this.onerror=null;this.src='${_noPreviewSvg}'">`;
 
-                grid.innerHTML += `
+                htmlParts.push(`
                     <div class="card" data-category="${item.vault_category}" data-tags="${tagsList}" data-name="${displayName.toLowerCase()}" data-filename="${item.filename}" ${clickStr}>
                         <input type="checkbox" class="vault-select-checkbox" data-filename="${item.filename}" data-category="${item.vault_category}" onclick="event.stopPropagation(); updateVaultSelection();">
                         <div class="card-img-container" style="padding-top:100%;">
@@ -757,15 +773,21 @@
                             </div>
                         </div>
                         <div class="card-banner" style="position:relative; background:var(--surface);">
-                            <h3>${displayName}</h3>
+                            <h3>${escHtml(displayName)}</h3>
                             <div class="card-meta-row" style="color:var(--text-muted);">
-                                <span>${item.filename}</span>
+                                <span>${escHtml(item.filename)}</span>
                                 ${isSearchRes ? `<span style="color: #4ade80;">Score: ${(m.score * 100).toFixed(0)}</span>` : ''}
                             </div>
                         </div>
                     </div>
-                `;
+                `);
             });
+
+            if (append) {
+                grid.insertAdjacentHTML('beforeend', htmlParts.join(''));
+            } else {
+                grid.innerHTML = htmlParts.join('');
+            }
 
             if(!window._semanticSearchActive) {
                 vaultOffset += models.length;

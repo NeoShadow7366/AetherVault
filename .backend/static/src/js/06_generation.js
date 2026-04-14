@@ -22,8 +22,11 @@
                 document.getElementById('inf-launch-btn').innerText = "Launch Engine";
                 document.getElementById('inf-launch-btn').style.color = "#cbd5e1";
                 
-                // Only autostart once — guard prevents repeated launches on tab switching
-                if(!window.comfyLaunching) {
+                // I-3 fix: Persistent guard prevents re-launch on tab switching.
+                // _engineAutoLaunched tracks per-engine so switching engines still auto-launches the new one.
+                if(!window._engineAutoLaunched) window._engineAutoLaunched = {};
+                if(!window.comfyLaunching && !window._engineAutoLaunched[engine]) {
+                    window._engineAutoLaunched[engine] = true;
                     launchActiveEngine();
                 }
             }
@@ -200,8 +203,8 @@
                     if(dlPollInterval) {
                         clearInterval(dlPollInterval);
                         dlPollInterval = null;
-                        // Final update to show completion if any were active
-                        updateDownloadStatus();
+                        // R-13: Use setTimeout to break the recursive call stack
+                        setTimeout(updateDownloadStatus, 500);
                     }
                 }
             } catch(e) {
@@ -318,12 +321,17 @@
                         throw new Error("Not ready");
                     } catch(e) {
                         retries++;
-                        // BUG-7 fix: Show retry progress and increase timeout to 60s
-                        btn.innerText = `Connecting... (${retries}s)`;
-                        if(retries > 60) {
+                        // BUG-7 fix: Show retry progress with progressive messaging (180s ceiling)
+                        if(retries > 30) {
+                            btn.innerText = `Still starting... (${retries}s)`;
+                        } else {
+                            btn.innerText = `Connecting... (${retries}s)`;
+                        }
+                        if(retries > 180) {
                             clearInterval(poll);
-                            btn.innerText = "Launch Timeout";
+                            btn.innerText = "Launch Timeout — Click to Retry";
                             btn.style.color = "#ef4444";
+                            btn.onclick = launchActiveEngine;
                             window.engineLaunching = false;
                         }
                     }
@@ -341,6 +349,15 @@
             const btn = document.getElementById('inf-generate-btn');
             const txt = document.getElementById('inf-generate-text');
             const fill = document.getElementById('inf-progress-fill');
+            
+            // R-12: Prompt length validation — prevent engine timeouts from extreme inputs
+            const _PROMPT_MAX = 10000;
+            const promptVal = document.getElementById('inf-prompt').value;
+            const negVal = document.getElementById('inf-negative').value;
+            if(promptVal.length > _PROMPT_MAX || negVal.length > _PROMPT_MAX) {
+                showToast(`⚠️ Prompt exceeds ${_PROMPT_MAX} character limit. Please shorten it.`);
+                return;
+            }
             
             // Build Universal Payload
             const payload = {
@@ -502,9 +519,12 @@
                     txt.innerText = "Processing...";
                     document.getElementById('inf-canvas-empty').innerText = "Generating your image...";
                     
-                    if(!window.comfyWS) {
+                    // R-4: Dynamic WebSocket URL for LAN sharing support
+                    if(!window.comfyWS && activeEngine === 'comfyui') {
                         try {
-                            window.comfyWS = new WebSocket('ws://127.0.0.1:8188/ws');
+                            const wsHost = window.location.hostname || '127.0.0.1';
+                            const wsPort = window._comfyPort || 8188;
+                            window.comfyWS = new WebSocket(`ws://${wsHost}:${wsPort}/ws`);
                             window.comfyWS.onmessage = (event) => {
                                 if(typeof event.data === 'string') {
                                     const msg = JSON.parse(event.data);
@@ -535,7 +555,18 @@
                                     reader.readAsArrayBuffer(event.data);
                                 }
                             };
-                        } catch(e) {}
+                            // R-2: Auto-reconnect on disconnect by nulling the reference
+                            window.comfyWS.onclose = () => {
+                                console.log('[ComfyUI WS] Connection closed. Will reconnect on next generation.');
+                                window.comfyWS = null;
+                            };
+                            window.comfyWS.onerror = (err) => {
+                                console.warn('[ComfyUI WS] Error:', err);
+                                window.comfyWS = null;
+                            };
+                        } catch(e) {
+                            console.warn('[ComfyUI WS] Failed to connect:', e);
+                        }
                     }
                     
                     window.comfyProgressInterval = setInterval(() => {
@@ -543,7 +574,24 @@
                         txt.innerText = `Processing... (${elapsed}s)`;
                     }, 1000);
                     
+                    // R-1: Poll ComfyUI history with a timeout ceiling (300 polls × 1.5s ≈ 7.5 min max)
+                    let comfyPollCount = 0;
+                    const COMFY_POLL_MAX = 300;
                     window.comfyPollInterval = setInterval(async () => {
+                        comfyPollCount++;
+                        if(comfyPollCount > COMFY_POLL_MAX) {
+                            clearInterval(window.comfyPollInterval);
+                            clearInterval(window.comfyProgressInterval);
+                            btn.disabled = false;
+                            txt.innerText = "Generate Image";
+                            fill.style.width = '0%';
+                            fill.classList.remove('progress-pulsing');
+                            hideGenProgress();
+                            document.getElementById('inf-canvas-empty').style.display = 'block';
+                            document.getElementById('inf-canvas-empty').innerText = "⏱️ Generation timed out after ~7 minutes. Engine may have stalled.";
+                            showToast('⚠️ ComfyUI generation timed out. Check engine logs.');
+                            return;
+                        }
                         try {
                             const histRes = await fetch('/api/comfy_proxy', {
                                 method: 'POST',
@@ -666,8 +714,9 @@
         
         async function checkSystemStatus() {
             try {
-                const res = await fetch('/api/server_status');
-                const data = await res.json();
+                // D-1 fix: Use shared deduped fetch
+                const data = await fetchServerStatus();
+                if (!data) return;
                 const toast = document.getElementById('global-sync-toast');
                 if(data.is_syncing) {
                     let msgs = [];

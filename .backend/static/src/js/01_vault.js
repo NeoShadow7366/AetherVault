@@ -106,11 +106,11 @@
                 depList.innerHTML = deps.map((dep, i) => `
                     <div style="background:var(--bg-color); border:1px solid var(--border); border-radius:10px; padding:14px; display:flex; align-items:center; gap:12px;">
                         <div style="flex:1;">
-                            <div style="font-weight:600; font-size:0.9rem;">${dep.name}</div>
-                            <div style="color:var(--text-muted); font-size:0.8rem;">${dep.type}</div>
+                            <div style="font-weight:600; font-size:0.9rem;">${escHtml(dep.name)}</div>
+                            <div style="color:var(--text-muted); font-size:0.8rem;">${escHtml(dep.type)}</div>
                         </div>
-                        ${dep.civitai_url ? `<a href="${dep.civitai_url}" target="_blank" style="color:var(--primary);font-size:0.8rem;text-decoration:none;font-weight:600;">View →</a>` : ''}
-                        <button onclick="quickDownloadDep('${dep.civitai_id}')" style="background:var(--primary);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">Install</button>
+                        ${dep.civitai_url ? `<a href="${escHtml(dep.civitai_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);font-size:0.8rem;text-decoration:none;font-weight:600;">View →</a>` : ''}
+                        <button onclick="quickDownloadDep('${escHtml(String(dep.civitai_id || ''))}')" style="background:var(--primary);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">Install</button>
                     </div>
                 `).join('');
             }
@@ -129,15 +129,18 @@
         let _allVaultModels = [];
 
         function filterVaultGrid(query) {
+            // V-4 fix: Reset semantic search flag when using standard filters
+            window._semanticSearchActive = false;
             const cat = document.getElementById('vault-cat-filter').value.toLowerCase();
             const tag = document.getElementById('vault-tag-filter').value.toLowerCase();
             const q = (query || '').toLowerCase();
             const grid = document.getElementById('models-grid');
             
             Array.from(grid.children).forEach(card => {
-                const cardCat = (card.dataset.category || '').toLowerCase();
-                const cardName = (card.dataset.name || '').toLowerCase();
-                const cardTags = (card.dataset.tags || '').toLowerCase();
+                // V-1 fix: data-name is already lowercase from renderVaultGrid, skip redundant toLowerCase
+                const cardCat = card.dataset.category || '';
+                const cardName = card.dataset.name || '';
+                const cardTags = card.dataset.tags || '';
                 const matchesCat = !cat || cardCat === cat;
                 const matchesTag = !tag || cardTags.includes(tag);
                 // Local filter acts only on name if not performing semantic search
@@ -169,5 +172,19 @@
             }
         }
 
+
+        // ── SSE Consumer: Vault Crawler Progress ──────────────────────────
+        window._onSSEVaultCrawl = function(data) {
+            if (!data) return;
+            if (data.status === 'started') {
+                showToast('🔍 Vault indexing started...');
+            } else if (data.status === 'completed') {
+                showToast(`✅ Vault indexing complete — ${data.indexed || 0} models indexed`);
+                // Refresh the vault grid to show newly indexed models
+                if (typeof loadModels === 'function') loadModels();
+            } else if (data.status === 'progress') {
+                console.debug(`[Vault Crawl] ${data.phase || 'Scanning'}: ${data.current || 0}/${data.total || '?'}`);
+            }
+        };
 
         /* ═══════════════════════════════════════════════

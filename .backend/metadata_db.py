@@ -71,6 +71,11 @@ class MetadataDB:
         try:
             cursor.execute("ALTER TABLE models ADD COLUMN latest_version_id INTEGER")
         except sqlite3.OperationalError: pass
+        # Multi-path scanning: track where each model physically lives
+        try:
+            cursor.execute("ALTER TABLE models ADD COLUMN source_path TEXT DEFAULT 'Global_Vault'")
+        except sqlite3.OperationalError: pass
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_source ON models(source_path)')
 
         # Generations table — My Creations gallery
         cursor.execute('''
@@ -179,23 +184,69 @@ class MetadataDB:
 
         return {"models": models, "total": total}
 
-    def insert_or_update_model(self, filename: str, vault_category: str, file_hash: str, metadata_json: str = None, thumbnail_path: str = None):
+    def insert_or_update_model(self, filename: str, vault_category: str, file_hash: str,
+                               metadata_json: str = None, thumbnail_path: str = None,
+                               source_path: str = 'Global_Vault'):
         """Inserts a newly crawled model into the dictionary, or updates its metadata if it exists."""
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+            INSERT INTO models (filename, vault_category, file_hash, metadata_json, thumbnail_path, last_scanned, source_path)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            ON CONFLICT(file_hash) DO UPDATE SET
+                filename=excluded.filename,
+                vault_category=excluded.vault_category,
+                metadata_json=COALESCE(excluded.metadata_json, models.metadata_json),
+                thumbnail_path=COALESCE(excluded.thumbnail_path, models.thumbnail_path),
+                source_path=excluded.source_path,
+                last_scanned=CURRENT_TIMESTAMP
+            ''', (filename, vault_category, file_hash, metadata_json, thumbnail_path, source_path))
+            
+            conn.commit()
+
+    def insert_discovered_model(self, filename: str, vault_category: str,
+                                source_path: str, file_size: int = 0):
+        """Fast discovery insert — registers a model WITHOUT hashing.
+        Uses filename+source_path as the dedup key since hash is unknown."""
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            # Check if already known by filename+source
+            cursor.execute(
+                'SELECT id FROM models WHERE filename = ? AND source_path = ?',
+                (filename, source_path))
+            if cursor.fetchone():
+                return  # Already discovered
+            cursor.execute('''
+            INSERT INTO models (filename, vault_category, file_hash, source_path, last_scanned)
+            VALUES (?, ?, NULL, ?, CURRENT_TIMESTAMP)
+            ''', (filename, vault_category, source_path))
+            conn.commit()
+
+    def get_unhashed_models(self, source_path: str = None) -> list:
+        """Returns models where file_hash is NULL (discovered but not yet hashed)."""
         conn = self._conn
         cursor = conn.cursor()
-        
-        cursor.execute('''
-        INSERT INTO models (filename, vault_category, file_hash, metadata_json, thumbnail_path, last_scanned)
-        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(file_hash) DO UPDATE SET
-            filename=excluded.filename,
-            vault_category=excluded.vault_category,
-            metadata_json=COALESCE(excluded.metadata_json, models.metadata_json),
-            thumbnail_path=COALESCE(excluded.thumbnail_path, models.thumbnail_path),
-            last_scanned=CURRENT_TIMESTAMP
-        ''', (filename, vault_category, file_hash, metadata_json, thumbnail_path))
-        
-        conn.commit()
+        if source_path:
+            cursor.execute('SELECT * FROM models WHERE file_hash IS NULL AND source_path = ?', (source_path,))
+        else:
+            cursor.execute('SELECT * FROM models WHERE file_hash IS NULL')
+        return [dict(row) for row in cursor.fetchall()]
+
+    def update_model_source(self, file_hash: str, new_source: str, new_category: str = None):
+        """Update the source_path (and optionally category) after migration."""
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            if new_category:
+                cursor.execute('UPDATE models SET source_path = ?, vault_category = ? WHERE file_hash = ?',
+                               (new_source, new_category, file_hash))
+            else:
+                cursor.execute('UPDATE models SET source_path = ? WHERE file_hash = ?',
+                               (new_source, file_hash))
+            conn.commit()
 
         
     def get_model_by_hash(self, file_hash: str):
@@ -235,32 +286,40 @@ class MetadataDB:
         
     def update_model_metadata(self, file_hash: str, metadata_json: str, thumbnail_path: str = None):
         """Updates a specific model with JSON metadata and an optional thumbnail path."""
-        conn = self._conn
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-        UPDATE models 
-        SET metadata_json = ?, thumbnail_path = ?, last_scanned = CURRENT_TIMESTAMP
-        WHERE file_hash = ?
-        ''', (metadata_json, thumbnail_path, file_hash))
-        
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+            UPDATE models 
+            SET metadata_json = ?, thumbnail_path = ?, last_scanned = CURRENT_TIMESTAMP
+            WHERE file_hash = ?
+            ''', (metadata_json, thumbnail_path, file_hash))
+            
+            conn.commit()
 
 
     def save_generation(self, image_path, prompt, negative, model, seed, steps, cfg, sampler, width, height, extra_json=None):
-        conn = self._conn
-        cursor = conn.cursor()
-        cursor.execute('''
-        INSERT INTO generations (image_path, prompt, negative, model, seed, steps, cfg, sampler, width, height, extra_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (image_path, prompt, negative, model, seed, steps, cfg, sampler, width, height, extra_json))
-        rowid = cursor.lastrowid
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            cursor.execute('''
+            INSERT INTO generations (image_path, prompt, negative, model, seed, steps, cfg, sampler, width, height, extra_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (image_path, prompt, negative, model, seed, steps, cfg, sampler, width, height, extra_json))
+            rowid = cursor.lastrowid
+            conn.commit()
 
-        return rowid
+            return rowid
 
     def list_generations(self, sort='newest', limit=100, offset=0):
-        order = 'created_at ASC' if sort == 'oldest' else ('rating DESC' if sort == 'top_rated' else 'created_at DESC')
+        # S2-7: Explicit allowlist prevents SQL injection if new sort options are added
+        _SORT_MAP = {
+            'newest': 'created_at DESC',
+            'oldest': 'created_at ASC',
+            'top_rated': 'rating DESC'
+        }
+        order = _SORT_MAP.get(sort, 'created_at DESC')
         conn = self._conn
         cursor = conn.cursor()
         cursor.execute(f'SELECT * FROM generations ORDER BY {order} LIMIT ? OFFSET ?', (limit, offset))
@@ -269,9 +328,10 @@ class MetadataDB:
         return [dict(r) for r in rows]
 
     def delete_generation(self, gen_id):
-        conn = self._conn
-        conn.execute('DELETE FROM generations WHERE id = ?', (gen_id,))
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            conn.execute('DELETE FROM generations WHERE id = ?', (gen_id,))
+            conn.commit()
 
 
     def batch_delete_generations(self, gen_ids: list) -> int:
@@ -279,31 +339,34 @@ class MetadataDB:
         Returns count of deleted rows."""
         if not gen_ids:
             return 0
-        conn = self._conn
-        placeholders = ','.join('?' for _ in gen_ids)
-        cursor = conn.execute(f'DELETE FROM generations WHERE id IN ({placeholders})', gen_ids)
-        deleted = cursor.rowcount
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            placeholders = ','.join('?' for _ in gen_ids)
+            cursor = conn.execute(f'DELETE FROM generations WHERE id IN ({placeholders})', gen_ids)
+            deleted = cursor.rowcount
+            conn.commit()
 
-        return deleted
+            return deleted
 
     def rate_generation(self, gen_id, rating):
-        conn = self._conn
-        conn.execute('UPDATE generations SET rating=? WHERE id=?', (rating, gen_id))
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            conn.execute('UPDATE generations SET rating=? WHERE id=?', (rating, gen_id))
+            conn.commit()
 
 
     def save_embedding(self, file_hash: str, vector_json: str):
-        conn = self._conn
-        cursor = conn.cursor()
-        cursor.execute('''
-        INSERT INTO embeddings (file_hash, vector_json, last_embedded)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(file_hash) DO UPDATE SET
-            vector_json=excluded.vector_json,
-            last_embedded=CURRENT_TIMESTAMP
-        ''', (file_hash, vector_json))
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            cursor.execute('''
+            INSERT INTO embeddings (file_hash, vector_json, last_embedded)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(file_hash) DO UPDATE SET
+                vector_json=excluded.vector_json,
+                last_embedded=CURRENT_TIMESTAMP
+            ''', (file_hash, vector_json))
+            conn.commit()
 
 
     def get_all_embeddings(self):
@@ -315,41 +378,34 @@ class MetadataDB:
         return [dict(row) for row in rows]
 
     def add_user_tag(self, file_hash: str, tag: str):
-        conn = self._conn
-        cursor = conn.cursor()
-        cursor.execute('INSERT OR IGNORE INTO user_tags (file_hash, tag) VALUES (?, ?)', (file_hash, tag))
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            cursor.execute('INSERT OR IGNORE INTO user_tags (file_hash, tag) VALUES (?, ?)', (file_hash, tag))
+            conn.commit()
 
 
     def remove_user_tag(self, file_hash: str, tag: str):
-        conn = self._conn
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM user_tags WHERE file_hash = ? AND tag = ?', (file_hash, tag))
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM user_tags WHERE file_hash = ? AND tag = ?', (file_hash, tag))
+            conn.commit()
 
 
     def get_user_tags(self, file_hash: str):
+        # S2-2: Use a fresh cursor instead of mutating shared row_factory
         conn = self._conn
-        # Temporarily use scalar row factory
-        old_factory = conn.row_factory
-        conn.row_factory = lambda cursor, row: row[0]
         cursor = conn.cursor()
         cursor.execute('SELECT tag FROM user_tags WHERE file_hash = ?', (file_hash,))
-        tags = cursor.fetchall()
-        conn.row_factory = old_factory
-        return tags
+        return [row[0] for row in cursor.fetchall()]
 
     def get_all_user_tags(self):
+        # S2-2: Use a fresh cursor instead of mutating shared row_factory
         conn = self._conn
-        # Temporarily use scalar row factory
-        old_factory = conn.row_factory
-        conn.row_factory = lambda cursor, row: row[0]
         cursor = conn.cursor()
         cursor.execute('SELECT DISTINCT tag FROM user_tags ORDER BY tag')
-        tags = cursor.fetchall()
-        conn.row_factory = old_factory
-
-        return tags
+        return [row[0] for row in cursor.fetchall()]
         
     def get_models_unembedded(self):
         conn = self._conn
@@ -374,30 +430,32 @@ class MetadataDB:
         return [dict(row) for row in rows]
 
     def set_model_update_status(self, file_hash: str, update_available: int, latest_version_id: int):
-        conn = self._conn
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE models 
-            SET update_available = ?, latest_version_id = ?
-            WHERE file_hash = ?
-        ''', (update_available, latest_version_id, file_hash))
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE models 
+                SET update_available = ?, latest_version_id = ?
+                WHERE file_hash = ?
+            ''', (update_available, latest_version_id, file_hash))
+            conn.commit()
 
 
     # ── Prompt Library ──────────────────────────────────────────────
 
     def save_prompt(self, title: str, prompt: str = "", negative: str = "", model: str = "", tags: str = "", extra_json: str = None) -> int:
         """Saves a favorite prompt to the library. Returns the new row ID."""
-        conn = self._conn
-        cursor = conn.cursor()
-        cursor.execute('''
-        INSERT INTO prompts (title, prompt, negative, model, tags, extra_json)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ''', (title, prompt, negative, model, tags, extra_json))
-        rowid = cursor.lastrowid
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            cursor.execute('''
+            INSERT INTO prompts (title, prompt, negative, model, tags, extra_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''', (title, prompt, negative, model, tags, extra_json))
+            rowid = cursor.lastrowid
+            conn.commit()
 
-        return rowid
+            return rowid
 
     def list_prompts(self, search: str = None, limit: int = 100) -> list:
         """Returns saved prompts, optionally filtered by title/content substring."""
@@ -417,9 +475,10 @@ class MetadataDB:
 
     def delete_prompt(self, prompt_id: int) -> None:
         """Deletes a saved prompt by ID."""
-        conn = self._conn
-        conn.execute('DELETE FROM prompts WHERE id = ?', (prompt_id,))
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            conn.execute('DELETE FROM prompts WHERE id = ?', (prompt_id,))
+            conn.commit()
 
 
     # ── Bulk Vault Operations ───────────────────────────────────────
@@ -428,24 +487,26 @@ class MetadataDB:
         """Batch-delete models by filename within a single transaction. Returns count deleted."""
         if not filenames:
             return 0
-        conn = self._conn
-        cursor = conn.cursor()
-        deleted = 0
-        try:
-            for fn in filenames:
-                cursor.execute('DELETE FROM models WHERE filename = ?', (fn,))
-                deleted += cursor.rowcount
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        return deleted
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            deleted = 0
+            try:
+                for fn in filenames:
+                    cursor.execute('DELETE FROM models WHERE filename = ?', (fn,))
+                    deleted += cursor.rowcount
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            return deleted
 
     def remove_model_by_filename(self, filename: str) -> None:
         """Removes a single model entry by filename."""
-        conn = self._conn
-        conn.execute('DELETE FROM models WHERE filename = ?', (filename,))
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            conn.execute('DELETE FROM models WHERE filename = ?', (filename,))
+            conn.commit()
 
 
     # ── Vault Export ────────────────────────────────────────────────
@@ -499,48 +560,49 @@ class MetadataDB:
         imported = 0
         skipped = 0
         failed = []
-        conn = self._conn
-        cursor = conn.cursor()
-        try:
-            for entry in manifest:
-                filename = entry.get('filename')
-                vault_category = entry.get('vault_category', '')
-                file_hash = entry.get('file_hash')
-                metadata_json = entry.get('metadata_json')
-                thumbnail_path = entry.get('thumbnail_path')
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            try:
+                for entry in manifest:
+                    filename = entry.get('filename')
+                    vault_category = entry.get('vault_category', '')
+                    file_hash = entry.get('file_hash')
+                    metadata_json = entry.get('metadata_json')
+                    thumbnail_path = entry.get('thumbnail_path')
 
-                if not filename or not file_hash:
-                    failed.append({'filename': filename or '(unknown)', 'reason': 'Missing filename or file_hash'})
-                    continue
+                    if not filename or not file_hash:
+                        failed.append({'filename': filename or '(unknown)', 'reason': 'Missing filename or file_hash'})
+                        continue
 
-                # Check if already exists
-                cursor.execute('SELECT id FROM models WHERE file_hash = ?', (file_hash,))
-                existing = cursor.fetchone()
-                if existing:
-                    skipped += 1
-                    continue
+                    # Check if already exists
+                    cursor.execute('SELECT id FROM models WHERE file_hash = ?', (file_hash,))
+                    existing = cursor.fetchone()
+                    if existing:
+                        skipped += 1
+                        continue
 
-                cursor.execute('''
-                INSERT INTO models (filename, vault_category, file_hash, metadata_json, thumbnail_path, last_scanned)
-                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(file_hash) DO UPDATE SET
-                    filename=excluded.filename,
-                    vault_category=excluded.vault_category,
-                    metadata_json=COALESCE(excluded.metadata_json, models.metadata_json),
-                    thumbnail_path=COALESCE(excluded.thumbnail_path, models.thumbnail_path),
-                    last_scanned=CURRENT_TIMESTAMP
-                ''', (filename, vault_category, file_hash, metadata_json, thumbnail_path))
-                imported += 1
+                    cursor.execute('''
+                    INSERT INTO models (filename, vault_category, file_hash, metadata_json, thumbnail_path, last_scanned)
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(file_hash) DO UPDATE SET
+                        filename=excluded.filename,
+                        vault_category=excluded.vault_category,
+                        metadata_json=COALESCE(excluded.metadata_json, models.metadata_json),
+                        thumbnail_path=COALESCE(excluded.thumbnail_path, models.thumbnail_path),
+                        last_scanned=CURRENT_TIMESTAMP
+                    ''', (filename, vault_category, file_hash, metadata_json, thumbnail_path))
+                    imported += 1
 
-                # Restore user tags if present
-                user_tags = entry.get('user_tags', [])
-                for tag in user_tags:
-                    cursor.execute('INSERT OR IGNORE INTO user_tags (file_hash, tag) VALUES (?, ?)', (file_hash, tag))
+                    # Restore user tags if present
+                    user_tags = entry.get('user_tags', [])
+                    for tag in user_tags:
+                        cursor.execute('INSERT OR IGNORE INTO user_tags (file_hash, tag) VALUES (?, ?)', (file_hash, tag))
 
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            failed.append({'filename': '(batch)', 'reason': str(e)})
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                failed.append({'filename': '(batch)', 'reason': str(e)})
         return {'imported': imported, 'skipped': skipped, 'failed': failed}
 
     # ── Recent Activity (Sprint 9) ─────────────────────────────────
@@ -618,34 +680,37 @@ class MetadataDB:
 
     def add_favorite(self, model_id: str, data_json: str):
         """Add or update a favorite model."""
-        conn = self._conn
-        conn.execute(
-            "INSERT OR REPLACE INTO favorites (model_id, data_json) VALUES (?, ?)",
-            (str(model_id), data_json)
-        )
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            conn.execute(
+                "INSERT OR REPLACE INTO favorites (model_id, data_json) VALUES (?, ?)",
+                (str(model_id), data_json)
+            )
+            conn.commit()
 
 
     def remove_favorite(self, model_id: str):
         """Remove a favorite model."""
-        conn = self._conn
-        conn.execute("DELETE FROM favorites WHERE model_id = ?", (str(model_id),))
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            conn.execute("DELETE FROM favorites WHERE model_id = ?", (str(model_id),))
+            conn.commit()
 
 
     def bulk_import_favorites(self, favorites_dict: dict):
         """Import a dict of {model_id: data} into favorites table (one-time migration)."""
-        conn = self._conn
-        cursor = conn.cursor()
-        for model_id, data in favorites_dict.items():
-            data_str = json.dumps(data) if isinstance(data, dict) else str(data)
-            cursor.execute(
-                "INSERT OR IGNORE INTO favorites (model_id, data_json) VALUES (?, ?)",
-                (str(model_id), data_str)
-            )
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn
+            cursor = conn.cursor()
+            for model_id, data in favorites_dict.items():
+                data_str = json.dumps(data) if isinstance(data, dict) else str(data)
+                cursor.execute(
+                    "INSERT OR IGNORE INTO favorites (model_id, data_json) VALUES (?, ?)",
+                    (str(model_id), data_str)
+                )
+            conn.commit()
 
-        logging.info(f"Bulk imported {len(favorites_dict)} favorites into SQLite")
+            logging.info(f"Bulk imported {len(favorites_dict)} favorites into SQLite")
 
 
 if __name__ == "__main__":

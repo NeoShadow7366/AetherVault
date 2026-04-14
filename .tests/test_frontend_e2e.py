@@ -171,7 +171,7 @@ def test_gallery_restore_flow(page: Page):
         btn.className = "action-btn";
         btn.title = "Drag to Canvas";
         btn.innerText = "Restore";
-        btn.onclick = () => repopulateUI(mockGraph);
+        btn.onclick = () => repopulateFromComfyWorkflow(mockGraph);
         
         mockItem.appendChild(btn);
         document.getElementById("gallery-grid").appendChild(mockItem);

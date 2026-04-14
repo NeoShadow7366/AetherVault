@@ -8,6 +8,9 @@ import json
 import base64
 import logging
 import urllib.request
+import urllib.error
+
+_PROMPT_MAX_CHARS = 10000  # R-12: Reject absurdly long prompts before engine dispatch
 
 
 class ProxyHandlersMixin:
@@ -32,6 +35,12 @@ class ProxyHandlersMixin:
 
         payload = data.get("payload")
         if endpoint == "/api/generate" and payload:
+            # R-12: Backend prompt length guard
+            for key in ("prompt", "negative_prompt"):
+                if len(payload.get(key, "")) > _PROMPT_MAX_CHARS:
+                    self.send_json_response({"error": f"{key} exceeds {_PROMPT_MAX_CHARS} character limit"}, 400)
+                    return
+
             # Sprint 12: Upload inpainting mask to ComfyUI if present
             mask_b64 = payload.get("mask_b64")
             if mask_b64:
@@ -54,16 +63,28 @@ class ProxyHandlersMixin:
                 return
 
         url = f"http://127.0.0.1:8188{endpoint}"
+        # ComfyUI v0.18+ validates Origin/Host — match them to avoid 403
+        _comfy_headers = {
+            'Origin': 'http://127.0.0.1:8188',
+            'Host': '127.0.0.1:8188',
+        }
 
         try:
             if payload:
-                req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
+                headers = {**_comfy_headers, 'Content-Type': 'application/json'}
+                req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers)
             else:
-                req = urllib.request.Request(url)
+                req = urllib.request.Request(url, headers=_comfy_headers)
 
-            with urllib.request.urlopen(req, timeout=30) as res:
+            with urllib.request.urlopen(req, timeout=300) as res:
                 content = res.read().decode('utf-8')
                 self.send_json_response(json.loads(content))
+        except urllib.error.HTTPError as e:
+            try:
+                err_body = e.read().decode('utf-8')
+                self.send_json_response(json.loads(err_body), 400)
+            except Exception:
+                self.send_json_response({"error": str(e)}, 500)
         except Exception as e:
             err_msg = str(e)
             if "Connection refused" in err_msg or "WinError 10061" in err_msg or "RemoteDisconnected" in err_msg:
@@ -102,7 +123,10 @@ class ProxyHandlersMixin:
         url = f"http://127.0.0.1:8188/view?{qs}"
 
         try:
-            req = urllib.request.Request(url)
+            req = urllib.request.Request(url, headers={
+                'Origin': 'http://127.0.0.1:8188',
+                'Host': '127.0.0.1:8188',
+            })
             with urllib.request.urlopen(req, timeout=10) as res:
                 img_data = res.read()
 
@@ -113,7 +137,7 @@ class ProxyHandlersMixin:
             self.end_headers()
             self.wfile.write(img_data)
         except Exception as e:
-            self.send_error(500, str(e))
+            self.send_json_response({"status": "error", "message": f"ComfyUI image fetch failed: {str(e)}"}, 502)
 
     def handle_comfy_upload(self):
         try:
@@ -121,7 +145,11 @@ class ProxyHandlersMixin:
             body = self.rfile.read(length)
 
             url = "http://127.0.0.1:8188/upload/image"
-            req = urllib.request.Request(url, data=body, headers={'Content-Type': self.headers['Content-Type']})
+            req = urllib.request.Request(url, data=body, headers={
+                'Content-Type': self.headers['Content-Type'],
+                'Origin': 'http://127.0.0.1:8188',
+                'Host': '127.0.0.1:8188',
+            })
             with urllib.request.urlopen(req, timeout=30) as res:
                 self.send_json_response(json.loads(res.read().decode('utf-8')))
         except Exception as e:
@@ -140,7 +168,11 @@ class ProxyHandlersMixin:
             body += b"\r\n--" + boundary + b"--\r\n"
 
             url = "http://127.0.0.1:8188/upload/image"
-            headers = {"Content-Type": f"multipart/form-data; boundary={boundary.decode()}"}
+            headers = {
+                "Content-Type": f"multipart/form-data; boundary={boundary.decode()}",
+                'Origin': 'http://127.0.0.1:8188',
+                'Host': '127.0.0.1:8188',
+            }
             req = urllib.request.Request(url, data=body, headers=headers)
             with urllib.request.urlopen(req, timeout=30) as res:
                 result = json.loads(res.read().decode('utf-8'))
@@ -151,8 +183,9 @@ class ProxyHandlersMixin:
 
     def _proxy_to_engine(self, engine_name: str, data: dict):
         """Consolidated proxy dispatcher for A1111, Forge, and Fooocus backends.
-        Uses _ENGINE_CONFIG for port/translator lookup."""
-        from server import _ENGINE_CONFIG
+        Uses _ENGINE_CONFIG for port/translator lookup.
+        Includes crash detection parity with ComfyUI proxy."""
+        from server import _ENGINE_CONFIG, AIWebServer
         config = _ENGINE_CONFIG.get(engine_name)
         if not config:
             self.send_json_response({"error": f"Unknown engine: {engine_name}"}, 400)
@@ -162,6 +195,12 @@ class ProxyHandlersMixin:
         endpoint = data.get("endpoint", config["gen_endpoint"])
 
         if endpoint == "/api/generate" and payload:
+            # R-12: Backend prompt length guard
+            for key in ("prompt", "negative_prompt"):
+                if len(payload.get(key, "")) > _PROMPT_MAX_CHARS:
+                    self.send_json_response({"error": f"{key} exceeds {_PROMPT_MAX_CHARS} character limit"}, 400)
+                    return
+
             try:
                 payload = config["translator"](payload)
                 if engine_name in ("a1111", "forge") and "init_images" in payload:
@@ -178,11 +217,41 @@ class ProxyHandlersMixin:
                 req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
             else:
                 req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=30) as res:
+            with urllib.request.urlopen(req, timeout=300) as res:
                 content = res.read().decode('utf-8')
                 self.send_json_response(json.loads(content))
         except Exception as e:
-            self.send_json_response({"error": str(e)}, 500)
+            err_msg = str(e)
+            # Crash detection: check if engine process died (parity with ComfyUI proxy)
+            if "Connection refused" in err_msg or "WinError 10061" in err_msg or "RemoteDisconnected" in err_msg:
+                # Map engine_name to package_id used by ProcessRegistry
+                pkg_id = "auto1111" if engine_name == "a1111" else engine_name
+                entry = AIWebServer.running_processes.get(pkg_id)
+                p = entry.get("process") if entry else None
+                if p and p.poll() is not None:
+                    # Process died — parse runtime.log for missing module errors
+                    log_path = os.path.join(self.root_dir, "packages", pkg_id, "runtime.log")
+                    missing_mod = None
+                    if os.path.exists(log_path):
+                        try:
+                            with open(log_path, 'r', encoding='utf-8') as f:
+                                lines = f.readlines()[-50:]
+                            for line in lines:
+                                if "ModuleNotFoundError" in line or "ImportError" in line:
+                                    missing_mod = line.strip()
+                                    break
+                        except Exception:
+                            pass
+
+                    if missing_mod:
+                        self.send_json_response({
+                            "error": "engine_crashed",
+                            "message": f"Engine crashed. {missing_mod}",
+                            "missing_module": missing_mod,
+                            "repair_available": True
+                        }, 500)
+                        return
+            self.send_json_response({"error": err_msg}, 500)
 
     def handle_a1111_proxy(self, data):
         self._proxy_to_engine("a1111", data)

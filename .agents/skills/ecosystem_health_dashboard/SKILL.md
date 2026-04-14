@@ -20,6 +20,9 @@ Provides a single, convenient command that gives a consolidated overview of the 
   - **Runtime Health Doctor**: Zombie processes, junctions, SQLite state, manifest integrity.
   - **Architecture Guardian**: High-level findings, zero-dependency compliance, major coupling risks.
   - **QA Guardian**: Recent automated test suite status, last run results, pending escalations.
+  - **Security Auditor Guardian**: Recent active fuzzing results, path traversal alerts.
+  - **Performance Profiler Guardian**: SQLite query bottlenecks, frontend DOM bloat warnings.
+  - **Technical Debt Guardian**: Open refactoring tickets, code rot alerts.
   - **API Contract Librarian**: Last sync timestamp, open warnings, drift alerts.
 - **Alert Triage**: Present findings in a clear, color-coded/emoji-based format (🟢 Green, 🟡 Yellow, 🔴 Red).
 - **Action Items**: Highlight and prioritize any action items that require immediate human attention.

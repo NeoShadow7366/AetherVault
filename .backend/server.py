@@ -30,7 +30,7 @@ from metadata_db import MetadataDB
 from symlink_manager import create_safe_directory_link
 from proxy_translators import build_comfy_workflow, build_a1111_payload, build_fooocus_payload
 from process_registry import ProcessRegistry
-from server_state import CachedValue, LRUCache, BatchQueue
+from server_state import CachedValue, LRUCache, BatchQueue, RequestMetrics
 from functools import wraps
 
 # ── Unified Error Handling Decorator ─────────────────────────────
@@ -208,10 +208,11 @@ def graceful_teardown():
 _vault_size_cache = CachedValue(ttl=300)  # 5 min TTL
 
 # ── Sprint 9: In-Memory Batch Generation Queue ──────────────────
-_batch_queue = []  # list of {id, status, payload, result, error}
-_batch_lock = threading.Lock()
-_batch_worker_running = False
-_BATCH_MAX_HISTORY = 50  # Purge completed jobs beyond this limit
+# R-6: Encapsulated via BatchQueue class (thread-safe, bounded history/queue)
+_batch_queue = BatchQueue(max_history=50, max_queue=200)
+
+# R-9: Per-request metrics (success/fail counts, latency)
+_request_metrics = RequestMetrics()
 
 # ── Phase 5: Civitai Search Cache (LRU, max 50, 15min TTL) ────
 _civitai_search_cache = LRUCache(max_size=50, ttl=900)
@@ -291,6 +292,10 @@ class AIWebServer(
         "/api/ollama/status":       "handle_ollama_status",
         "/api/favorites":           "handle_get_favorites",
         "/api/events":              "handle_event_stream",
+        "/api/metrics":             "handle_get_metrics",
+        "/api/model_paths":         "handle_get_model_paths",
+        "/api/vault/scan_progress":  "handle_scan_progress",
+        "/api/vault/external_sources": "handle_external_sources",
     }
 
     _POST_ROUTES = {
@@ -338,15 +343,32 @@ class AIWebServer(
         "/api/ollama/enhance":      "handle_ollama_enhance",
         "/api/favorites/add":       "handle_add_favorite",
         "/api/favorites/remove":    "handle_remove_favorite",
+        "/api/model_paths":         "handle_save_model_paths",
+        "/api/vault/scan_external":  "handle_scan_external",
+        "/api/vault/hash_library":   "handle_hash_library",
+        "/api/vault/hash_single":    "handle_hash_single",
+        "/api/vault/cancel_scan":    "handle_cancel_scan",
+        "/api/vault/migrate":        "handle_migrate_models",
+        "/api/probe_url":            "handle_probe_url",
     }
 
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        start_time = time.time()
+        success = True
         
         handler_name = self._GET_ROUTES.get(path)
         if handler_name:
-            getattr(self, handler_name)()
+            try:
+                getattr(self, handler_name)()
+            except Exception:
+                success = False
+                raise
+            finally:
+                if path != "/api/events":  # Don't track SSE long-poll
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    _request_metrics.record(path, success, elapsed_ms)
         else:
             self.serve_static_files(path)
 
@@ -378,21 +400,31 @@ class AIWebServer(
             self.send_json_response({"error": f"Endpoint {path} not found"}, 404)
             return
         
-        # Routes can be either "method_name" (receives data) or ("method_name", False) (no data arg)
-        if isinstance(route, tuple):
-            handler_name, needs_data = route
-            getattr(self, handler_name)()
-        else:
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length) if content_length > 0 else b"{}"
-            
-            try:
-                data = json.loads(body.decode('utf-8'))
-            except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                logging.warning(f"Failed to parse POST body as JSON: {e}")
-                data = {}
-            
-            getattr(self, route)(data)
+        start_time = time.time()
+        success = True
+        
+        try:
+            # Routes can be either "method_name" (receives data) or ("method_name", False) (no data arg)
+            if isinstance(route, tuple):
+                handler_name, needs_data = route
+                getattr(self, handler_name)()
+            else:
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                
+                try:
+                    data = json.loads(body.decode('utf-8'))
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    logging.warning(f"Failed to parse POST body as JSON: {e}")
+                    data = {}
+                
+                getattr(self, route)(data)
+        except Exception:
+            success = False
+            raise
+        finally:
+            elapsed_ms = (time.time() - start_time) * 1000
+            _request_metrics.record(path, success, elapsed_ms)
 
     def serve_static_files(self, path):
         # Decode and normalize path separators for Windows
@@ -462,8 +494,71 @@ class AIWebServer(
             query = qs.get("query", [""])[0]
             type_filter = qs.get("type", [""])[0]
             offset = int(qs.get("offset", ["0"])[0])
-            
-            # Cache Check (LRU, auto-evicts)
+            exact_id = qs.get("exact_id", [""])[0]
+            browse = qs.get("browse", [""])[0]
+
+            # ── E-1 fix: Exact model ID lookup via REST API v1 ──
+            if exact_id:
+                cache_key = f"exact_{exact_id}"
+                cached = _civitai_search_cache.get(cache_key)
+                if cached is not None:
+                    self.send_json_response(cached)
+                    return
+                api_url = f"https://civitai.com/api/v1/models/{exact_id}"
+                settings = _get_settings()
+                api_key = settings.get("api_key", "")
+                headers = {"User-Agent": "AetherVault/1.0"}
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                req = urllib.request.Request(api_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=10) as res:
+                    data = json.loads(res.read().decode('utf-8'))
+                _civitai_search_cache.set(cache_key, data)
+                self.send_json_response(data)
+                return
+
+            # ── E-1 fix: Browse mode via REST API v1 ──
+            if browse:
+                sort_param = qs.get("sort", [""])[0]
+                nsfw_param = qs.get("nsfw", ["false"])[0]
+                types_param = qs.get("types", [""])[0]
+                base_param = qs.get("baseModels", [""])[0]
+                early_param = qs.get("earlyAccess", [""])[0]
+
+                cache_key = f"browse_{sort_param}_{nsfw_param}_{types_param}_{base_param}_{query}_{offset}"
+                cached = _civitai_search_cache.get(cache_key)
+                if cached is not None:
+                    self.send_json_response(cached)
+                    return
+
+                api_url = "https://civitai.com/api/v1/models"
+                params = {"limit": "40", "nsfw": nsfw_param}
+                if sort_param:
+                    params["sort"] = sort_param
+                if types_param:
+                    params["types"] = types_param
+                if base_param:
+                    params["baseModels"] = base_param
+                if early_param:
+                    params["earlyAccess"] = early_param
+                if query:
+                    params["query"] = query
+                param_str = urllib.parse.urlencode(params)
+                full_url = f"{api_url}?{param_str}"
+
+                settings = _get_settings()
+                api_key = settings.get("api_key", "")
+                headers = {"User-Agent": "AetherVault/1.0"}
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                req = urllib.request.Request(full_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=10) as res:
+                    data = json.loads(res.read().decode('utf-8'))
+                _civitai_search_cache.set(cache_key, data)
+                self.send_json_response(data)
+                return
+
+            # ── Standard MeiliSearch text query path ──
             cache_key = f"{query}_{type_filter}_{offset}"
             cached_items = _civitai_search_cache.get(cache_key)
             if cached_items is not None:
@@ -583,12 +678,41 @@ class AIWebServer(
 
 
 
+    # ── R-9: Metrics Endpoint ─────────────────────────────────
+
+    def handle_get_metrics(self):
+        """GET /api/metrics — returns per-endpoint request metrics."""
+        self.send_json_response({
+            "status": "success",
+            "metrics": _request_metrics.get_snapshot()
+        })
+
+    @api_handler
+    def handle_probe_url(self, data):
+        """POST /api/probe_url — probe whether a URL is reachable (P-2 fix)."""
+        url = data.get("url", "")
+        if not url:
+            self.send_json_response({"reachable": False, "error": "No URL provided"})
+            return
+        # Security: only allow localhost/LAN probes
+        from urllib.parse import urlparse as _up
+        parsed = _up(url)
+        hostname = parsed.hostname or ""
+        if hostname not in ("localhost", "127.0.0.1", "0.0.0.0") and not hostname.startswith("192.168.") and not hostname.startswith("10."):
+            self.send_json_response({"reachable": False, "error": "Only local URLs allowed"})
+            return
+        try:
+            req = urllib.request.Request(url, method="GET")
+            urllib.request.urlopen(req, timeout=2)
+            self.send_json_response({"reachable": True})
+        except Exception:
+            self.send_json_response({"reachable": False})
+
     # ── Sprint 9: Batch Generation Queue ────────────────────────────
 
     @api_handler
     def handle_batch_generate(self, data):
         """POST /api/generate/batch — add one or more payloads to the batch queue."""
-        global _batch_worker_running
         payloads = data.get("payloads", [])
         if not payloads:
             # Single payload shorthand
@@ -600,12 +724,20 @@ class AIWebServer(
             self.send_json_response({"status": "error", "message": "No payloads provided"}, 400)
             return
 
+        # R-3: Reject when queue is saturated to prevent memory exhaustion
+        if _batch_queue.is_full(len(payloads)):
+            self.send_json_response({
+                "status": "error",
+                "message": f"Queue full ({_batch_queue.count_active()} active jobs). Limit reached."
+            }, 429)
+            return
+
         job_ids = []
         start_worker = False
-        with _batch_lock:
+        with _batch_queue.lock:
             for p in payloads:
                 job_id = str(uuid.uuid4())[:8]
-                _batch_queue.append({
+                _batch_queue.add({
                     "id": job_id,
                     "status": "pending",
                     "payload": p,
@@ -615,12 +747,12 @@ class AIWebServer(
                 })
                 job_ids.append(job_id)
             # Atomic check-then-set under lock to prevent double workers
-            if not _batch_worker_running:
-                _batch_worker_running = True
+            if not _batch_queue.worker_running:
+                _batch_queue.worker_running = True
                 start_worker = True
 
         if start_worker:
-            t = threading.Thread(target=self._batch_worker, daemon=False)
+            t = threading.Thread(target=self._batch_worker, daemon=True)
             t.start()
 
         self.send_json_response({
@@ -632,24 +764,11 @@ class AIWebServer(
 
     def handle_batch_queue_status(self):
         """GET /api/generate/queue — returns current batch queue state."""
-        with _batch_lock:
-            queue_snapshot = [
-                {
-                    "id": j["id"],
-                    "status": j["status"],
-                    "prompt": (j.get("payload") or {}).get("prompt", "")[:80],
-                    "result": j.get("result"),
-                    "error": j.get("error"),
-                    "created_at": j.get("created_at", 0)
-                }
-                for j in _batch_queue
-            ]
-        self.send_json_response({"status": "success", "queue": queue_snapshot})
+        self.send_json_response({"status": "success", "queue": _batch_queue.get_snapshot()})
 
     @staticmethod
     def _batch_worker():
         """Background worker that processes batch generation queue sequentially."""
-        global _batch_worker_running
         logging.info("Batch generation worker started.")
         try:
             from event_bus import event_bus as _bus
@@ -657,24 +776,11 @@ class AIWebServer(
             _bus = None
 
         while True:
-            job = None
-            with _batch_lock:
-                for j in _batch_queue:
-                    if j["status"] == "pending":
-                        j["status"] = "running"
-                        job = j
-                        break
+            job = _batch_queue.claim_next()
 
             if not job:
-                with _batch_lock:
-                    _batch_worker_running = False
-                    # Purge completed/failed jobs beyond max history to prevent memory bloat
-                    terminal = [j for j in _batch_queue if j["status"] in ("done", "failed")]
-                    if len(terminal) > _BATCH_MAX_HISTORY:
-                        # Keep only the most recent ones
-                        terminal.sort(key=lambda x: x.get("created_at", 0), reverse=True)
-                        ids_to_keep = {j["id"] for j in terminal[:_BATCH_MAX_HISTORY]}
-                        _batch_queue[:] = [j for j in _batch_queue if j["status"] in ("pending", "running") or j["id"] in ids_to_keep]
+                _batch_queue.worker_running = False
+                _batch_queue.trim_history()
                 logging.info("Batch generation worker finished — queue empty.")
                 break
 
@@ -701,21 +807,18 @@ class AIWebServer(
                 with urllib.request.urlopen(req, timeout=300) as res:
                     content = json.loads(res.read().decode('utf-8'))
 
-                with _batch_lock:
-                    job["status"] = "done"
-                    job["result"] = content
-                    # Strip base64 images from completed jobs to save memory
-                    if isinstance(content, dict) and "images" in content:
-                        job["result"] = {k: v for k, v in content.items() if k != "images"}
-                        job["result"]["_image_count"] = len(content["images"])
+                # Strip base64 images from completed jobs to save memory
+                result = content
+                if isinstance(content, dict) and "images" in content:
+                    result = {k: v for k, v in content.items() if k != "images"}
+                    result["_image_count"] = len(content["images"])
+                _batch_queue.update_status(job["id"], "done", result=result)
                 logging.info(f"Batch job {job['id']} completed.")
                 if _bus:
                     _bus.emit("batch_update", {"id": job["id"], "status": "done"})
 
             except Exception as e:
-                with _batch_lock:
-                    job["status"] = "failed"
-                    job["error"] = str(e)
+                _batch_queue.update_status(job["id"], "failed", error=str(e))
                 logging.error(f"Batch job {job['id']} failed: {e}")
                 if _bus:
                     _bus.emit("batch_update", {"id": job["id"], "status": "failed", "error": str(e)})
@@ -779,6 +882,10 @@ def start_background_scanners():
             crawler = VaultCrawler(root_dir, db=shared_db)
             civitai = CivitaiClient(root_dir, db=shared_db)
             
+            # Store crawler as module attribute for handler access
+            import server as _self_mod
+            _self_mod._vault_crawler = crawler
+            
             while True:
                 try:
                     crawler.crawl()
@@ -799,9 +906,10 @@ def start_background_scanners():
     def _sse_emitter():
         """Background thread that pushes state changes to the SSE EventBus.
 
-        Polls download/install progress files and server metrics, emitting
-        events when changes are detected. This enables the frontend to replace
-        setInterval polling with a single EventSource connection.
+        R-11: Change-driven emission — uses file mtime tracking so it only
+        reads/parses JSON files when they actually change on disk. Process
+        count changes are tracked with a cached value. This replaces the
+        previous blind 2s polling approach.
         """
         try:
             from event_bus import event_bus
@@ -809,21 +917,21 @@ def start_background_scanners():
             logging.warning("event_bus not available, SSE emitter disabled")
             return
 
-        _last_dl_hash = None
-        _last_install_hash = None
+        _last_dl_mtime = 0.0
+        _last_inst_mtime = 0.0
+        _last_running_count = -1
 
         while True:
             try:
-                # ── Download Progress ──
+                # ── Download Progress (only when file changes) ──
                 dl_file = os.path.join(root_dir, ".backend", "cache", "downloads.json")
                 if os.path.exists(dl_file):
                     try:
-                        with open(dl_file, 'r') as f:
-                            dl_data = json.load(f)
-                        # Only emit if changed (simple hash of status values)
-                        dl_hash = str({k: v.get("status") for k, v in dl_data.items()})
-                        if dl_hash != _last_dl_hash:
-                            _last_dl_hash = dl_hash
+                        mtime = os.path.getmtime(dl_file)
+                        if mtime != _last_dl_mtime:
+                            _last_dl_mtime = mtime
+                            with open(dl_file, 'r') as f:
+                                dl_data = json.load(f)
                             active = {k: v for k, v in dl_data.items()
                                       if v.get("status") not in ("completed", "failed", "error")}
                             event_bus.emit("download_progress", {
@@ -833,33 +941,35 @@ def start_background_scanners():
                     except (json.JSONDecodeError, OSError):
                         pass
 
-                # ── Install Progress ──
+                # ── Install Progress (only when file changes) ──
                 inst_file = os.path.join(root_dir, ".backend", "cache", "install_jobs.json")
                 if os.path.exists(inst_file):
                     try:
-                        with open(inst_file, 'r') as f:
-                            inst_data = json.load(f)
-                        inst_hash = str({k: v.get("status") for k, v in inst_data.items()})
-                        if inst_hash != _last_install_hash:
-                            _last_install_hash = inst_hash
+                        mtime = os.path.getmtime(inst_file)
+                        if mtime != _last_inst_mtime:
+                            _last_inst_mtime = mtime
+                            with open(inst_file, 'r') as f:
+                                inst_data = json.load(f)
                             event_bus.emit("install_progress", inst_data)
                     except (json.JSONDecodeError, OSError):
                         pass
 
-                # ── Server Status (every iteration = ~2s) ──
+                # ── Server Status (only when process count changes) ──
                 try:
                     running_count = AIWebServer.running_processes.count_running()
-                    event_bus.emit("server_status", {
-                        "running_packages": running_count,
-                        "timestamp": time.time()
-                    })
+                    if running_count != _last_running_count:
+                        _last_running_count = running_count
+                        event_bus.emit("server_status", {
+                            "running_packages": running_count,
+                            "timestamp": time.time()
+                        })
                 except Exception:
                     pass
 
             except Exception as e:
                 logging.debug(f"SSE emitter cycle error: {e}")
 
-            time.sleep(2)  # 2-second emission cycle
+            time.sleep(3)  # R-11: 3s cycle (up from 2s — change-driven reduces need for frequency)
 
     sse_thread = threading.Thread(target=_sse_emitter, daemon=True, name="sse-emitter")
     sse_thread.start()

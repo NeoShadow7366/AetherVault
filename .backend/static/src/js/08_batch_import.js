@@ -15,7 +15,7 @@
                 seed: parseInt(document.getElementById('inf-seed')?.value || '-1'),
                 sampler: document.getElementById('inf-sampler')?.value || 'euler',
                 scheduler: document.getElementById('inf-scheduler')?.value || 'normal',
-                backend: 'comfyui'
+                backend: document.getElementById('inf-engine')?.value || 'comfyui'
             };
             // Model
             const modelSel = document.getElementById('inf-model');

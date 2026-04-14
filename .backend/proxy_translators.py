@@ -1,5 +1,6 @@
 import random
 import os
+import logging
 
 def get_hires_upscaler_params(name):
     if 'latent' in name.lower():
@@ -46,28 +47,37 @@ def build_comfy_workflow(payload: dict) -> dict:
     # FLUX PIPELINE
     # ==========================
     if model_type in ["flux-dev", "flux-schnell"]:
-        unet_name = ckpt_name  # Flux UI drop uses the main ckpt dropdown for Unet
+        unet_name = payload.get("flux_unet", ckpt_name)  # FLUX isolated dropdown takes precedence
         clip_name = payload.get("flux_clip_l", "")
         t5_name = payload.get("flux_t5xxl", "")
         flux_guidance = float(payload.get("flux_guidance", 3.5))
 
         if not unet_name:
-            raise ValueError("FLUX requires a UNET model.")
+            raise ValueError("FLUX requires a UNET model. Please ensure one is downloaded and selected.")
+            
+        if not t5_name or not clip_name:
+            try:
+                clip_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Global_Vault", "clip")
+                if os.path.exists(clip_dir):
+                    clips = [f for f in os.listdir(clip_dir) if f.endswith(('.safetensors', '.pt', '.ckpt'))]
+                    if not t5_name:
+                        t5s = [f for f in clips if "t5" in f.lower()]
+                        if t5s: t5_name = t5s[0]
+                    if not clip_name:
+                        ls = [f for f in clips if "t5" not in f.lower()]
+                        if ls: clip_name = ls[0]
+            except Exception as e:
+                logging.warning(f"FLUX clip/T5 auto-discovery failed: {e}")
+                
+        if not t5_name:
+            raise ValueError("FLUX requires a T5XXL text encoder in Global_Vault/clip. None found or selected.")
+        if not clip_name:
+            raise ValueError("FLUX requires a CLIP-L text encoder in Global_Vault/clip. None found or selected.")
         
         if vae_name == "none":
-            try:
-                # Resolve Global_Vault/vae path
-                vae_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Global_Vault", "vaes")
-                if os.path.exists(vae_dir):
-                    vaes = [f for f in os.listdir(vae_dir) if f.endswith(('.safetensors', '.pt', '.ckpt'))]
-                    if vaes:
-                        vae_name = vaes[0]
-                    else:
-                        vae_name = "ae.safetensors"
-                else:
-                    vae_name = "ae.safetensors"
-            except Exception:
-                vae_name = "ae.safetensors"
+            # FLUX requires ae.safetensors (16-channel latent VAE)
+            # Do NOT auto-discover from Global_Vault/vaes which has SD/SDXL 4-channel VAEs
+            vae_name = "ae.safetensors"
 
         workflow["11"] = {"inputs": {"unet_name": unet_name, "weight_dtype": "default"}, "class_type": "UNETLoader"}
         workflow["12"] = {"inputs": {"clip_name1": t5_name, "clip_name2": clip_name, "type": "flux"}, "class_type": "DualCLIPLoader"}
@@ -455,6 +465,12 @@ def build_a1111_payload(payload: dict) -> dict:
     }
     
     ckpt_name = payload.get("override_settings", {}).get("sd_model_checkpoint", "")
+    
+    # Sprint 12: Override with FLUX unet if model type is FLUX
+    if payload.get("model_type", "") in ["flux-dev", "flux-schnell"]:
+        if payload.get("flux_unet"):
+            ckpt_name = payload.get("flux_unet")
+            
     if ckpt_name:
         result["override_settings"]["sd_model_checkpoint"] = ckpt_name
         

@@ -68,7 +68,17 @@ class SystemHandlersMixin:
                 self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
                 return
 
+
+            # S2-18: Path traversal guard — package_id comes from query string
+            if ".." in package_id or "/" in package_id or "\\" in package_id:
+                self.send_json_response({"status": "error", "message": "Invalid package_id"}, 403)
+                return
+            packages_base = os.path.abspath(os.path.join(self.root_dir, "packages"))
             log_path = os.path.join(self.root_dir, "packages", package_id, "runtime.log")
+            if not os.path.abspath(log_path).startswith(packages_base):
+                self.send_json_response({"status": "error", "message": "Path traversal blocked"}, 403)
+                return
+
             if not os.path.exists(log_path):
                 self.send_json_response({"status": "success", "logs": "--- No active execution environment. Logs empty. ---"})
                 return

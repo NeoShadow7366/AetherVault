@@ -27,7 +27,7 @@ class GalleryHandlersMixin:
     def handle_gallery_list(self):
         """GET /api/gallery — list generations with self-healing for stale entries."""
         try:
-            from server import _get_db, api_handler
+            from server import _get_db
             from urllib.parse import urlparse, parse_qs
             db = _get_db()
             qs = parse_qs(urlparse(self.path).query)

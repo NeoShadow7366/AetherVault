@@ -20,14 +20,14 @@
                 list.innerHTML = data.prompts.map(p => `
                     <div class="prompt-card">
                         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
-                            <strong style="font-size:0.95rem;">${p.title}</strong>
+                            <strong style="font-size:0.95rem;">${escHtml(p.title)}</strong>
                             <div style="display:flex;gap:6px;flex-shrink:0;">
                                 <button onclick="event.stopPropagation(); loadPromptToStudio(${p.id})" title="Load into Studio" style="background:var(--primary);color:#fff;border:none;padding:4px 10px;border-radius:5px;font-size:0.8rem;cursor:pointer;font-weight:600;">⚡ Load</button>
                                 <button onclick="event.stopPropagation(); deletePrompt(${p.id})" title="Delete" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:1rem;">🗑</button>
                             </div>
                         </div>
-                        <div style="font-size:0.82rem; color:var(--text-muted); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${(p.prompt || '').substring(0,120)}${p.prompt?.length > 120 ? '...' : ''}</div>
-                        ${p.model ? `<div style="font-size:0.75rem; color:#60a5fa; margin-top:6px;">🎨 ${p.model}</div>` : ''}
+                        <div style="font-size:0.82rem; color:var(--text-muted); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${escHtml((p.prompt || '').substring(0,120))}${p.prompt?.length > 120 ? '...' : ''}</div>
+                        ${p.model ? `<div style="font-size:0.75rem; color:#60a5fa; margin-top:6px;">🎨 ${escHtml(p.model)}</div>` : ''}
                     </div>
                 `).join('');
             } catch(e) {
@@ -182,6 +182,6 @@
         })();
 
         // Init
-        loadExplorer();
+        // V-3 fix: Removed loadExplorer() — switchTab() lazy-loads it on first visit
         loadSettings();
 

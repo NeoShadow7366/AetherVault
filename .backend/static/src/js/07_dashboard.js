@@ -54,9 +54,9 @@
 
         async function refreshDashboard() {
             try {
-                const res = await fetch('/api/server_status');
-                const data = await res.json();
-                updateDashboardCards(data);
+                // D-1 fix: Use shared deduped fetch
+                const data = await fetchServerStatus();
+                if (data) updateDashboardCards(data);
             } catch(e) {}
         }
         setInterval(checkSystemStatus, 15000); // Reduced from 3s — SSE provides real-time updates
@@ -87,9 +87,9 @@
                         const statText = j.status === 'starting' ? 'Initializing...' : `${progress}%`;
                         container.innerHTML += `
                             <div class="download-toast">
-                                <div style="font-size:0.85rem; font-weight:600; margin-bottom:5px;">Downloading: ${j.model_name}</div>
+                                <div style="font-size:0.85rem; font-weight:600; margin-bottom:5px;">Downloading: ${escHtml(j.model_name)}</div>
                                 <div style="font-size:0.75rem; color:var(--text-muted); display:flex; justify-content:space-between;">
-                                    <span>${j.filename}</span><span>${statText}</span>
+                                    <span>${escHtml(j.filename)}</span><span>${statText}</span>
                                 </div>
                                 <div class="dl-bar-bg"><div class="dl-bar-fill" style="width: ${progress}%"></div></div>
                             </div>`;
@@ -170,8 +170,8 @@
                 <div class="activity-item" onclick="switchTab('${it.type === 'generation' ? 'creations' : 'vault'}')">
                     <div class="activity-icon">${it.icon}</div>
                     <div class="activity-text">
-                        <div class="primary">${it.primary}</div>
-                        <div class="secondary">${it.secondary}</div>
+                        <div class="primary">${escHtml(it.primary)}</div>
+                        <div class="secondary">${escHtml(it.secondary)}</div>
                     </div>
                     <div class="activity-time">${it.time}</div>
                 </div>
@@ -179,7 +179,7 @@
         }
 
         async function clearDashboardActivity() {
-            if(!confirm("Clear Dashboard Activity Feed?\n\nThis will clear the downloads log. Your Gallery generations and actual files will NOT be affected, as requested.")) return;
+            if(!confirm("Clear Dashboard Activity Feed?\n\nThis will clear the activity log (downloads + generations). Your Gallery images and actual files will NOT be affected.")) return;
             try {
                 const res = await fetch('/api/dashboard/clear_history', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({}) });
                 const data = await res.json();
@@ -196,9 +196,6 @@
             const svg = document.getElementById('dash-donut');
             const legend = document.getElementById('dash-donut-legend');
             if(!svg || !legend) return;
-
-            // Rest of donut chart code omitted here
-
 
             const entries = Object.entries(distribution).filter(([k,v]) => v > 0);
             const total = entries.reduce((s, [,v]) => s + v, 0);

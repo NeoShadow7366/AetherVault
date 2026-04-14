@@ -53,7 +53,7 @@ Generative AI Manager is a singular hub that automates Runtimes, APIs, Assets, a
 1. **Human User** – Final authority. Approves rule overrides, architectural changes, ADRs.
 2. **Architecture Guardian** – Technical authority on structure. Veto on code structure, dependencies, system boundaries. → See [SKILL.md](file:///g:/AG%20SM/.agents/skills/architecture_guardian/SKILL.md)
 3. **QA Guardian** – Authority over testing and correctness. Yields to Architecture Guardian on structural matters. → See [SKILL.md](file:///g:/AG%20SM/.agents/skills/qa_guardian_agent/SKILL.md)
-4. **Diagnostics (Health Doctor & API Librarian)** – Read-only advisory. Escalate upward. → See respective SKILL.md files.
+4. **Diagnostics & Analytics (Health Doctor, API Librarian, Performance Profiler & Frontend Experience Guardian)** – Read-only advisory. Escalate upward. → See respective SKILL.md files.
 5. **Worker Agents / Skills** – Pure execution layer. Zero authority to create or modify rules.
 
 #### Conflict Resolution
@@ -130,10 +130,15 @@ Check `.agents/skills/` for a matching SKILL.md → read its `description` → f
 | [Runtime Health Doctor](file:///g:/AG%20SM/.agents/skills/runtime_health_doctor/SKILL.md) | Read-only runtime infrastructure health monitor |
 | [API Contract Librarian](file:///g:/AG%20SM/.agents/skills/api_contract_librarian/SKILL.md) | JSON payload drift prevention between frontend/backend |
 | [Ecosystem Health Dashboard](file:///g:/AG%20SM/.agents/skills/ecosystem_health_dashboard/SKILL.md) | Consolidated guardian ecosystem status overview |
+| [Frontend Experience Guardian](file:///g:/AG%20SM/.agents/skills/frontend_experience_guardian/SKILL.md) | Enforces UI/UX best practices, premium design aesthetics, and frontend architectural integrity |
 | [Safe Test Runner](file:///g:/AG%20SM/.agents/skills/safe_test_runner/SKILL.md) | OS-level timeout wrapper for QA tests |
 | [Codebase Analyst](file:///g:/AG%20SM/.agents/skills/codebase_analyst/SKILL.md) | Read-only investigative expert for architecture and code flows |
 | [Codebase Documenter](file:///g:/AG%20SM/.agents/skills/codebase_documenter/SKILL.md) | Generates structured Markdown documentation |
 | [Doc Guardian](file:///g:/AG%20SM/.agents/skills/doc_guardian/SKILL.md) | Manages documentation files with timestamped backups |
+| [Security Auditor Guardian](file:///g:/AG%20SM/.agents/skills/security_auditor_guardian/SKILL.md) | Active "Red Team" fuzzer for API boundaries, DB injection, and path traversal |
+| [Performance Profiler Guardian](file:///g:/AG%20SM/.agents/skills/performance_profiler_guardian/SKILL.md) | Analyzes SQLite performance, memory usage, and UI render bottlenecks |
+| [Technical Debt Guardian](file:///g:/AG%20SM/.agents/skills/technical_debt_guardian/SKILL.md) | Scans for code rot, deprecated logic, unused imports, and stale TODOs |
+| [Release Communications Specialist](file:///g:/AG%20SM/.agents/skills/release_communications_specialist/SKILL.md) | Translates technical commits into semantic, user-facing changelog entries |
 
 ### Rules & Policies
 
@@ -170,7 +175,7 @@ Check `.agents/skills/` for a matching SKILL.md → read its `description` → f
 AG SM/                              ← Project Root
 ├── agents.md                       ← THIS FILE — agent routing document
 ├── .agents/                        ← Agent ecosystem
-│   ├── skills/                     ← One SKILL.md per capability (16 skills)
+│   ├── skills/                     ← One SKILL.md per capability (21 skills)
 │   ├── rules/                      ← Policy documents (6 rules)
 │   ├── workflows/                  ← Reusable multi-step procedures
 │   ├── contracts/                  ← API payload contracts

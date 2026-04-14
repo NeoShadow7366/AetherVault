@@ -57,7 +57,16 @@ class DownloadHandlersMixin:
         if api_key:
             cmd.extend(["--api_key", api_key])
 
-        subprocess.Popen(cmd, **kwargs)
+        proc = subprocess.Popen(cmd, **kwargs)
+
+        # S2-3: Track download PID for cleanup on shutdown
+        try:
+            from server import AIWebServer
+            if hasattr(AIWebServer, 'running_processes') and hasattr(AIWebServer.running_processes, 'register'):
+                AIWebServer.running_processes.register(f"download_{job_id}", proc)
+        except Exception:
+            pass  # Registry not available — non-critical
+
         self.send_json_response({"status": "success", "job_id": job_id})
 
     def handle_retry_download(self, data):
@@ -132,7 +141,17 @@ class DownloadHandlersMixin:
             self.send_json_response({"status": "error", "message": "Missing filename or category"}, 400)
             return
 
-        filepath = os.path.join(self.root_dir, "Global_Vault", category, filename)
+        # S2-12: Path traversal guard
+        if ".." in filename or ".." in category:
+            self.send_json_response({"status": "error", "message": "Invalid path"}, 403)
+            return
+
+        vault_base = os.path.abspath(os.path.join(self.root_dir, "Global_Vault"))
+        filepath = os.path.abspath(os.path.join(vault_base, category, filename))
+        if not filepath.startswith(vault_base):
+            self.send_json_response({"status": "error", "message": "Path escapes vault"}, 403)
+            return
+
         if os.path.exists(filepath):
             try:
                 os.remove(filepath)
@@ -150,7 +169,17 @@ class DownloadHandlersMixin:
             self.send_json_response({"status": "error", "message": "Missing category"}, 400)
             return
 
-        folder_path = os.path.normpath(os.path.join(self.root_dir, "Global_Vault", category))
+        # S2-11: Path traversal guard
+        if ".." in category:
+            self.send_json_response({"status": "error", "message": "Invalid path"}, 403)
+            return
+
+        vault_base = os.path.abspath(os.path.join(self.root_dir, "Global_Vault"))
+        folder_path = os.path.abspath(os.path.join(vault_base, category))
+        if not folder_path.startswith(vault_base):
+            self.send_json_response({"status": "error", "message": "Path escapes vault"}, 403)
+            return
+
         os.makedirs(folder_path, exist_ok=True)
 
         try:

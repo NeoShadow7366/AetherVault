@@ -43,8 +43,8 @@
                     `;
                 });
                 
-                // Refresh recipes UI to accurately reflect newly installed/uninstalled packages
-                loadRecipes();
+                // A-1 fix: Removed loadRecipes() from here — callers manage recipe loading independently
+                // to prevent double-loading when both tabs initialize.
             } catch (e) {
                 console.error(e);
             }
@@ -102,6 +102,7 @@
         }
 
         let _installPollIntervals = {};
+        let _installReloadPending = {};  // P-3 fix: dedup guard for SSE + polling overlap
 
         async function installRecipe(recipeId, appId) {
             const btn = document.getElementById(`install-btn-${appId}`);
@@ -155,7 +156,10 @@
                         if(barEl) barEl.style.background = 'linear-gradient(90deg, #10b981, #22c55e)';
                         if(phaseEl) { phaseEl.innerText = 'Installation Complete'; phaseEl.style.color = '#4ade80'; }
                         if(btn) { btn.innerText = 'Installed'; btn.style.background = 'var(--surface)'; btn.style.color = 'var(--text-muted)'; }
-                        setTimeout(() => { loadRecipes(); if(typeof loadPackages === 'function') loadPackages(); }, 2000);
+                        if(!_installReloadPending[appId]) {
+                            _installReloadPending[appId] = true;
+                            setTimeout(() => { delete _installReloadPending[appId]; loadRecipes(); if(typeof loadPackages === 'function') loadPackages(); }, 2000);
+                        }
                     } else if(job.status === 'failed') {
                         clearInterval(_installPollIntervals[appId]);
                         delete _installPollIntervals[appId];
@@ -168,8 +172,8 @@
                 }
             }, 2000);
         }
-        async function launchPackage(packageId) {
-            const btn = event.currentTarget;
+        async function launchPackage(packageId, e) {
+            const btn = e?.currentTarget || document.querySelector(`button[onclick*="launchPackage('${packageId}')"]`);
             btn.innerText = "Launching...";
             btn.disabled = true;
             try {
@@ -199,12 +203,20 @@
                             attempts++;
                             if(statusEl) statusEl.innerHTML = `<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#a78bfa; margin-right:6px;"></span>Warming up engine... (${attempts}s)`;
                             try {
-                                const probe = await fetch(response.url, {mode: 'no-cors', signal: AbortSignal.timeout(2000)});
-                                // If we get here without error, the engine is listening
-                                clearInterval(pollId);
-                                if(statusEl) { statusEl.innerHTML = '✅ Engine ready!'; setTimeout(() => { statusEl.style.display = 'none'; }, 2000); }
-                                window.open(response.url, '_blank');
-                                loadPackages();
+                                // P-2 fix: Use backend probe instead of fragile no-cors fetch
+                                const probe = await fetch('/api/probe_url', {
+                                    method: 'POST',
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({url: response.url}),
+                                    signal: AbortSignal.timeout(3000)
+                                });
+                                const probeData = await probe.json();
+                                if (probeData.reachable) {
+                                    clearInterval(pollId);
+                                    if(statusEl) { statusEl.innerHTML = '✅ Engine ready!'; setTimeout(() => { statusEl.style.display = 'none'; }, 2000); }
+                                    window.open(response.url, '_blank');
+                                    loadPackages();
+                                }
                             } catch(_) {
                                 if(attempts >= maxAttempts) {
                                     clearInterval(pollId);
@@ -253,7 +265,15 @@
                     }
                     // Full re-install: poll install_jobs.json for progress
                     if(statusEl) statusEl.innerHTML = '<span class="progress-pulsing" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#f59e0b; margin-right:6px;"></span>Re-downloading source code...';
+                    let repairPollCount = 0;
                     const repairPoll = setInterval(async () => {
+                        repairPollCount++;
+                        // P-4 fix: timeout after 5 minutes (150 polls × 2s)
+                        if (repairPollCount > 150) {
+                            clearInterval(repairPoll);
+                            if(statusEl) { statusEl.innerHTML = '⏰ Repair timed out after 5 minutes. Check server logs.'; }
+                            return;
+                        }
                         try {
                             const sr = await fetch('/api/install/status');
                             const sd = await sr.json();
@@ -310,8 +330,8 @@
             }
         }
 
-        async function stopPackage(packageId) {
-            const btn = event.currentTarget;
+        async function stopPackage(packageId, e) {
+            const btn = e?.currentTarget || document.querySelector(`button[onclick*="stopPackage('${packageId}')"]`);
             const originalText = btn.innerText;
             btn.innerText = "Stopping...";
             btn.disabled = true;
@@ -329,8 +349,8 @@
             }
         }
         
-        async function restartPackage(packageId) {
-            const btn = event.currentTarget;
+        async function restartPackage(packageId, e) {
+            const btn = e?.currentTarget || document.querySelector(`button[onclick*="restartPackage('${packageId}')"]`);
             btn.innerText = "Restarting...";
             btn.disabled = true;
             const statusEl = document.getElementById(`pkg-status-${packageId}`);
@@ -356,9 +376,9 @@
             }
         }
 
-        async function uninstallPackage(packageId) {
+        async function uninstallPackage(packageId, e) {
             if(!confirm("Are you sure you want to permanently delete " + packageId + "?\n\nNote: Your Global Vault models are safe and will NOT be deleted.")) return;
-            const btn = event.currentTarget;
+            const btn = e?.currentTarget || document.querySelector(`button[onclick*="uninstallPackage('${packageId}')"]`);
             btn.innerText = "Removing...";
             btn.disabled = true;
             btn.style.opacity = '0.7';
@@ -676,7 +696,10 @@
                     if (btn) { btn.innerText = 'Installed'; btn.style.background = 'var(--surface)'; btn.style.color = 'var(--text-muted)'; }
                     // Clean up any active polling interval for this app
                     if (_installPollIntervals[appId]) { clearInterval(_installPollIntervals[appId]); delete _installPollIntervals[appId]; }
-                    setTimeout(() => { loadRecipes(); loadPackages(); }, 2000);
+                    if(!_installReloadPending[appId]) {
+                        _installReloadPending[appId] = true;
+                        setTimeout(() => { delete _installReloadPending[appId]; loadRecipes(); loadPackages(); }, 2000);
+                    }
                 } else if (job.status === 'failed') {
                     if (barEl) barEl.style.background = '#ef4444';
                     if (phaseEl) { phaseEl.innerText = 'Installation Failed'; phaseEl.style.color = '#ef4444'; }

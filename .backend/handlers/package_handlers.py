@@ -43,6 +43,17 @@ class PackageHandlersMixin:
         POST /api/ollama/enhance  → handle_ollama_enhance
     """
 
+    def _validate_package_id(self, package_id: str) -> bool:
+        """S2-20: Centralized package_id validation — rejects path traversal characters.
+        Returns True if valid, sends 403 and returns False if invalid."""
+        if not package_id:
+            self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
+            return False
+        if ".." in package_id or "/" in package_id or "\\" in package_id:
+            self.send_json_response({"status": "error", "message": "Invalid package_id"}, 403)
+            return False
+        return True
+
     def send_api_models(self):
         try:
             from server import _get_db
@@ -246,8 +257,7 @@ class PackageHandlersMixin:
         from server import AIWebServer
         from symlink_manager import create_safe_directory_link
         package_id = data.get("package_id")
-        if not package_id:
-            self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
+        if not self._validate_package_id(package_id):
             return
 
         # Guard: Prevent double-launch
@@ -372,8 +382,7 @@ class PackageHandlersMixin:
         Progress is tracked via install_jobs.json for SSE consumer integration.
         """
         package_id = data.get("package_id")
-        if not package_id:
-            self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
+        if not self._validate_package_id(package_id):
             return
 
         package_path = os.path.join(self.root_dir, "packages", package_id)
@@ -642,8 +651,7 @@ class PackageHandlersMixin:
     def handle_stop(self, data=None):
         from server import AIWebServer
         package_id = data.get("package_id") if data else None
-        if not package_id:
-            self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
+        if not self._validate_package_id(package_id):
             return
 
         if not AIWebServer.running_processes.is_running(package_id):
@@ -658,8 +666,7 @@ class PackageHandlersMixin:
         """Atomic restart: stop → wait for port release → re-launch."""
         from server import AIWebServer
         package_id = data.get("package_id")
-        if not package_id:
-            self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
+        if not self._validate_package_id(package_id):
             return
         AIWebServer._kill_tracked_process(package_id)
         time.sleep(1.0)
@@ -668,8 +675,7 @@ class PackageHandlersMixin:
     def handle_uninstall(self, data):
         from server import AIWebServer
         package_id = data.get("package_id")
-        if not package_id:
-            self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
+        if not self._validate_package_id(package_id):
             return
         AIWebServer._kill_tracked_process(package_id)
         logging.info(f"Triggering uninstallation for {package_id}")
@@ -689,8 +695,7 @@ class PackageHandlersMixin:
         try:
             qs = parse_qs(urlparse(self.path).query)
             package_id = qs.get("package_id", [""])[0]
-            if not package_id:
-                self.send_json_response({"status": "error", "message": "Missing package_id"}, 400)
+            if not self._validate_package_id(package_id):
                 return
             target_dir = os.path.join(self.root_dir, "packages", package_id, "custom_nodes")
             extensions = []
@@ -706,8 +711,10 @@ class PackageHandlersMixin:
     def handle_install_extension(self, data):
         package_id = data.get("package_id")
         repo_url = data.get("repo_url")
-        if not package_id or not repo_url:
-            self.send_json_response({"status": "error", "message": "Missing package_id or repo_url"}, 400)
+        if not self._validate_package_id(package_id):
+            return
+        if not repo_url:
+            self.send_json_response({"status": "error", "message": "Missing repo_url"}, 400)
             return
         target_dir = os.path.join(self.root_dir, "packages", package_id, "custom_nodes")
         os.makedirs(target_dir, exist_ok=True)
@@ -716,7 +723,7 @@ class PackageHandlersMixin:
             from installer_engine import ExtensionCloneTracker
             tracker = ExtensionCloneTracker(self.root_dir)
             logging.info(f"Starting tracked clone of {repo_url} (job: {job_id})")
-            t = threading.Thread(target=tracker.clone_with_progress, args=(repo_url, target_dir, job_id), daemon=False)
+            t = threading.Thread(target=tracker.clone_with_progress, args=(repo_url, target_dir, job_id), daemon=True)
             t.start()
             self.send_json_response({"status": "success", "job_id": job_id, "message": "Extension clone started with progress tracking."})
         except Exception as e:
@@ -761,8 +768,10 @@ class PackageHandlersMixin:
     def handle_remove_extension(self, data):
         package_id = data.get("package_id")
         ext_name = data.get("ext_name")
-        if not package_id or not ext_name:
-            self.send_json_response({"status": "error", "message": "Missing package_id or ext_name"}, 400)
+        if not self._validate_package_id(package_id):
+            return
+        if not ext_name or ".." in ext_name or "/" in ext_name or "\\" in ext_name:
+            self.send_json_response({"status": "error", "message": "Invalid ext_name"}, 403)
             return
         target_path = os.path.join(self.root_dir, "packages", package_id, "custom_nodes", ext_name)
         if not os.path.exists(target_path):
@@ -876,3 +885,138 @@ class PackageHandlersMixin:
                 self.send_json_response({"enhanced_prompt": enhanced.strip()})
         except Exception as e:
             self.send_json_response({"error": f"Ollama request failed: {str(e)}"}, 500)
+
+    # ══════════════════════════════════════════════
+    #  EXTRA MODEL PATHS CONFIGURATION
+    # ══════════════════════════════════════════════
+
+    def _resolve_yaml_path(self, package_id: str) -> str:
+        """Resolve extra_model_paths.yaml path for a given package.
+        Currently ComfyUI-specific; extensible for other engines."""
+        return os.path.join(self.root_dir, "packages", package_id, "app", "extra_model_paths.yaml")
+
+    def handle_get_model_paths(self):
+        """GET /api/model_paths?package_id=comfyui
+        Returns the structured contents of the package's extra_model_paths.yaml."""
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        package_id = qs.get('package_id', [''])[0]
+
+        if not self._validate_package_id(package_id):
+            return
+
+        yaml_path = self._resolve_yaml_path(package_id)
+
+        if not os.path.exists(yaml_path):
+            self.send_json_response({
+                "status": "success",
+                "yaml_path": yaml_path,
+                "sections": {},
+                "exists": False
+            })
+            return
+
+        try:
+            # Parse YAML manually (no pyyaml dependency — use simple parser)
+            sections = self._parse_yaml_simple(yaml_path)
+            self.send_json_response({
+                "status": "success",
+                "yaml_path": yaml_path,
+                "sections": sections,
+                "exists": True
+            })
+        except Exception as e:
+            logging.error(f"Failed to read model paths YAML: {e}")
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
+
+    def handle_save_model_paths(self, data: dict):
+        """POST /api/model_paths
+        Writes structured path data back to extra_model_paths.yaml with backup."""
+        package_id = data.get("package_id", "")
+        if not self._validate_package_id(package_id):
+            return
+
+        sections = data.get("sections", {})
+        if not isinstance(sections, dict):
+            self.send_json_response({"status": "error", "message": "Invalid sections format"}, 400)
+            return
+
+        yaml_path = self._resolve_yaml_path(package_id)
+
+        try:
+            # Create backup if file exists
+            if os.path.exists(yaml_path):
+                backup_path = yaml_path + ".bak"
+                shutil.copy2(yaml_path, backup_path)
+                logging.info(f"Backed up {yaml_path} to {backup_path}")
+
+            # Write YAML
+            self._write_yaml_simple(yaml_path, sections)
+            logging.info(f"Wrote model paths config to {yaml_path}")
+
+            self.send_json_response({
+                "status": "success",
+                "message": "Model paths saved. Restart the engine for changes to take effect.",
+                "yaml_path": yaml_path
+            })
+        except Exception as e:
+            logging.error(f"Failed to save model paths YAML: {e}")
+            self.send_json_response({"status": "error", "message": str(e)}, 500)
+
+    @staticmethod
+    def _parse_yaml_simple(filepath: str) -> dict:
+        """Parse a simple two-level YAML file without requiring PyYAML.
+        Handles the extra_model_paths.yaml format:
+            section_name:
+                key: value
+        """
+        sections = {}
+        current_section = None
+
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line in f:
+                stripped = line.rstrip()
+                # Skip empty lines and comments
+                if not stripped or stripped.startswith('#'):
+                    continue
+                # Top-level section (no leading whitespace, ends with colon)
+                if not line[0].isspace() and stripped.endswith(':'):
+                    current_section = stripped[:-1].strip()
+                    sections[current_section] = {}
+                # Key-value pair (indented)
+                elif current_section and line[0].isspace() and ':' in stripped:
+                    key, _, value = stripped.partition(':')
+                    key = key.strip()
+                    value = value.strip()
+                    # Remove surrounding quotes if present
+                    if value and value[0] in ('"', "'") and value[-1] == value[0]:
+                        value = value[1:-1]
+                    sections[current_section][key] = value
+
+        return sections
+
+    @staticmethod
+    def _write_yaml_simple(filepath: str, sections: dict):
+        """Write a simple two-level YAML file without requiring PyYAML."""
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+        lines = ["# ComfyUI Extra Model Paths — Managed by AetherVault\n"]
+        lines.append(f"# Last modified: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        lines.append("\n")
+
+        for section_name, entries in sections.items():
+            if not isinstance(entries, dict):
+                continue
+            lines.append(f"{section_name}:\n")
+            for key, value in entries.items():
+                # Quote paths containing spaces or backslashes
+                if ' ' in str(value) or '\\' in str(value):
+                    lines.append(f"    {key}: \"{value}\"\n")
+                else:
+                    lines.append(f"    {key}: {value}\n")
+            lines.append("\n")
+
+        with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
+            f.writelines(lines)
+
